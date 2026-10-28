@@ -61,8 +61,6 @@ The adversarial prompt turns the question into a choice between the gold answer 
 
 The Mem0 paper leaves adversarial questions out and reports a 10-run judge mean ([arXiv:2504.19413](https://arxiv.org/html/2504.19413v1)). Raganite’s judge is one pass.
 
-The paper’s column titles use different names from these category ids. The table below uses the assignment that reproduces their published overall: their Open Domain column is single-hop, their Single Hop column is multi-hop, Temporal stays temporal, and their Multi-Hop column is open-domain.
-
 | System | Single-hop | Multi-hop | Temporal | Open-domain |
 | --- | --- | --- | --- | --- |
 | Raganite | 79.5 | 58.5 | 43.6 | 54.2 |
