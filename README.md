@@ -136,10 +136,6 @@ OpenAI and Azure OpenAI are the model providers. Indexing accepts LangChain `Doc
 | Separate graphs | [Namespaces](docs/guides/namespaces.md) |
 | Read the scores in full | [Benchmarks](docs/guides/benchmarking.md) |
 
-## Citation
-
-Raganite does not have its own paper. The benchmark page cites the HotpotQA comparison in HippoRAG 2 ([arXiv:2502.14802](https://arxiv.org/html/2502.14802v1)) and the LoCoMo judge comparison in the Mem0 paper ([arXiv:2504.19413](https://arxiv.org/html/2504.19413v1)).
-
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE).

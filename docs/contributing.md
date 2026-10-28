@@ -368,6 +368,61 @@ asks. Prepare a focused release PR when the scope/version is agreed:
 7. Commit the version, lockfile, generated notes, and consumed-fragment deletions
    in the release PR. Mark the PR as a release in the changelog exemption.
 8. Merge through the normal checks/reviews and verify the resulting package
-   artifacts. Create a tag/GitHub Release only according to the agreed release
-   policy; neither currently happens automatically, and a tag push alone does
-   not trigger the `main`-push package workflow.
+   artifacts. A normal `main` push builds packages but never publishes them.
+   Create the release through one of the approved routes below. A tag push
+   alone does not publish a package.
+
+### Create a GitHub Release
+
+After the release PR has merged, open **Actions → Package → Run workflow**:
+
+1. Select the `main` branch.
+2. Set `create_release` to true. Leaving it false runs CI/build only.
+3. Run the workflow and review the CI/build results.
+4. Approve the `github-release` environment deployment when prompted.
+
+The release-creation job creates `v<project.version>` at the exact tested commit,
+generates GitHub release notes, and attaches the validated distributions. It does
+not bump versions, generate Towncrier notes, or open a release PR; those changes
+must already be committed. Existing conflicting tags/releases are not overwritten.
+Only stable versions in `X.Y.Z` form are supported by this workflow.
+
+Alternatively, publish a non-draft, non-prerelease GitHub Release through the
+GitHub UI or API. Its tag must be `v<project.version>`, and its commit must already
+belong to `main`. Publishing that release triggers source validation, CI, and a
+package build for the tagged commit before considering registry publication.
+
+### Registry publication and approvals
+
+Registry publication still requires all of the following:
+
+- A published stable GitHub Release, or a successful explicitly requested
+  release-creation job in the same workflow run.
+- Successful source validation, CI, and package build.
+- Repository variable `ENABLE_PACKAGE_PUBLISH` set to the literal string `true`.
+- Approval for the `package-publish` environment, when its protection rules require it.
+- An explicit `PACKAGE_PUBLISH_URL` upload endpoint and either a
+  `PACKAGE_PUBLISH_TOKEN` secret or the `PACKAGE_PUBLISH_USERNAME` /
+  `PACKAGE_PUBLISH_PASSWORD` secret pair.
+
+**Before enabling publication**, administrators must configure required reviewers
+for the `github-release` and `package-publish` environments under **Settings →
+Environments**. Referencing an environment in YAML does not itself enforce human
+approval; without protection rules a job can proceed without a review. Configure
+branch/tag restrictions and disable self-approval where appropriate. Custom
+runners must also provide Git, Bash, and the GitHub CLI (`gh`) for release creation.
+
+Leave `ENABLE_PACKAGE_PUBLISH` unset or false to create GitHub Releases and build
+artifacts without uploading to a package registry. Ordinary `main` pushes and
+build-only manual runs cannot publish, even when that variable is true.
+
+The workflow's default token permission remains `contents: read`. Only the
+release-creation job receives `contents: write` for tags/releases; build, test,
+and registry-publishing jobs do not. No job creates release PRs, so none receives
+`pull-requests: write`. If release-PR automation is added later, grant that
+permission only to its dedicated job, along with the contents access it needs.
+
+Releases created using the workflow's `GITHUB_TOKEN` do not start another release
+event workflow. The approved creation route therefore continues to the gated
+publishing job in the same run. Registry uploads reuse that run's validated
+distributions and deliberately fail on duplicate versions.

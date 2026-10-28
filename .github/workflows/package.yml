@@ -3,10 +3,12 @@ name: Package
 on:
   push:
     branches: [main]
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
-      publish:
-        description: Publish after a successful build (also requires ENABLE_PACKAGE_PUBLISH=true).
+      create_release:
+        description: Create a GitHub Release for the version already committed on main (requires release-environment approval).
         type: boolean
         required: false
         default: false
@@ -20,9 +22,68 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  source:
+    name: Validate release source
+    if: >-
+      (github.event_name != 'release' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'release' &&
+       github.event.release.draft == false && github.event.release.prerelease == false)
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.source.outputs.version }}
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Check out the exact build source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Validate main ancestry and release version
+        id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          CREATE_RELEASE: ${{ inputs.create_release }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A release must refer to code already committed on main.
+          git merge-base --is-ancestor HEAD origin/main
+          python - <<'PY'
+          import os
+          import re
+          import subprocess
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          is_release = os.environ["EVENT_NAME"] == "release"
+          creating = os.environ["CREATE_RELEASE"] == "true"
+          if is_release or creating:
+              if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+                  raise SystemExit("Only stable X.Y.Z versions can be released by this workflow")
+              tag = f"v{version}"
+              if is_release and os.environ["RELEASE_TAG"] != tag:
+                  raise SystemExit("Release tag must match v<project.version>")
+              existing = subprocess.run(
+                  ["git", "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}"],
+                  capture_output=True, text=True,
+              )
+              if existing.returncode == 0 and existing.stdout.strip() != sha:
+                  raise SystemExit("Release tag already points to a different commit")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\nsha={sha}\n")
+          PY
+
   checks:
-    name: Post-merge checks
-    if: github.ref == 'refs/heads/main'
+    name: Package checks
+    needs: source
     uses: ./.github/workflows/ci.yml
     secrets:
       PYTHON_INDEX_USERNAME: ${{ secrets.PYTHON_INDEX_USERNAME }}
@@ -30,7 +91,7 @@ jobs:
 
   build:
     name: Build distribution
-    needs: checks
+    needs: [source, checks]
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     outputs:
@@ -87,25 +148,65 @@ jobs:
             echo "## Package build"
             echo "Version: $PACKAGE_VERSION"
             echo "Wheel and source distribution are available as workflow artifacts."
+            echo "Main pushes and build-only manual runs never publish packages."
             if [[ "$PUBLISH_ENABLED" != true ]]; then
               echo "Publishing is disabled (ENABLE_PACKAGE_PUBLISH is not true)."
             else
-              echo "Publishing is enabled; see the publish job for approval/upload status."
+              echo "Publishing is enabled for approved releases only; see the release/publish jobs."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Remove registry credentials
         if: always()
         shell: bash
         run: rm -rf "$RUNNER_TEMP/uv-credentials"
+  # Protect this environment with required reviewers in repository settings.
+  # Only this job may create tags/releases; no release PRs are created here,
+  # so pull-requests: write is intentionally not granted.
+  create-release:
+    name: Create approved GitHub Release
+    needs: [source, build]
+    if: github.event_name == 'workflow_dispatch' && inputs.create_release == true
+    permissions:
+      contents: write
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    environment: github-release
+    steps:
+      - name: Download the validated distributions
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          path: dist
+          merge-multiple: true
+      - name: Create the version tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.source.outputs.version }}
+          RELEASE_SHA: ${{ needs.source.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "v${RELEASE_VERSION}" dist/* \
+            --target "$RELEASE_SHA" \
+            --title "Raganite ${RELEASE_VERSION}" \
+            --generate-notes
 
-
+  # Keep ENABLE_PACKAGE_PUBLISH unset/false until registry deployment is wanted.
+  # GITHUB_TOKEN-created releases do not trigger another release workflow run,
+  # so an approved creation above continues to publish within this same run.
+  # UI/API-published releases run source validation, CI and a fresh build first.
+  # Protect package-publish with required reviewers to approve each registry upload.
   publish:
-    name: Publish package (opt-in)
-    needs: build
+    name: Publish approved release (opt-in)
+    needs: [build, create-release]
     if: >-
-      github.ref == 'refs/heads/main' &&
+      always() && !cancelled() && needs.build.result == 'success' &&
       vars.ENABLE_PACKAGE_PUBLISH == 'true' &&
-      (github.event_name == 'push' || inputs.publish == true)
+      ((github.event_name == 'release' && github.event.action == 'published' &&
+        github.event.release.draft == false && github.event.release.prerelease == false) ||
+       (github.event_name == 'workflow_dispatch' && inputs.create_release == true &&
+        needs.create-release.result == 'success'))
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     environment: package-publish
