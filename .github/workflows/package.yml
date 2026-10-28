@@ -1,0 +1,150 @@
+name: Package
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish after a successful build (also requires ENABLE_PACKAGE_PUBLISH=true).
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  # Never interrupt an in-progress upload when another merge arrives.
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    name: Post-merge checks
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+    secrets:
+      PYTHON_INDEX_USERNAME: ${{ secrets.PYTHON_INDEX_USERNAME }}
+      PYTHON_INDEX_PASSWORD: ${{ secrets.PYTHON_INDEX_PASSWORD }}
+
+  build:
+    name: Build distribution
+    needs: checks
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.artifact.outputs.artifact-id }}
+      version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up dependencies
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: "3.13"
+          registry-url: ${{ vars.PYTHON_INDEX_URL || 'https://pypi.org/simple' }}
+          registry-username: ${{ secrets.PYTHON_INDEX_USERNAME }}
+          registry-password: ${{ secrets.PYTHON_INDEX_PASSWORD }}
+      - name: Install production dependencies
+        run: uv sync --no-dev
+      - name: Read package version
+        id: metadata
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={project['version']}\n")
+          PY
+      - name: Build wheel and source distribution
+        run: uv build
+      - name: Validate distribution metadata
+        run: uvx twine check --strict dist/*
+      - name: Save distributions
+        id: artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: raganite-${{ steps.metadata.outputs.version }}-${{ github.sha }}
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record deployment status
+        env:
+          PACKAGE_VERSION: ${{ steps.metadata.outputs.version }}
+          PUBLISH_ENABLED: ${{ vars.ENABLE_PACKAGE_PUBLISH }}
+        shell: bash
+        run: |
+          {
+            echo "## Package build"
+            echo "Version: $PACKAGE_VERSION"
+            echo "Wheel and source distribution are available as workflow artifacts."
+            if [[ "$PUBLISH_ENABLED" != true ]]; then
+              echo "Publishing is disabled (ENABLE_PACKAGE_PUBLISH is not true)."
+            else
+              echo "Publishing is enabled; see the publish job for approval/upload status."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove registry credentials
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/uv-credentials"
+
+
+  publish:
+    name: Publish package (opt-in)
+    needs: build
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      vars.ENABLE_PACKAGE_PUBLISH == 'true' &&
+      (github.event_name == 'push' || inputs.publish == true)
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    environment: package-publish
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+      - name: Download the validated build from this run
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          path: dist
+          merge-multiple: true
+      - name: Publish to the explicitly configured registry
+        env:
+          PUBLISH_URL: ${{ vars.PACKAGE_PUBLISH_URL }}
+          PUBLISH_TOKEN: ${{ secrets.PACKAGE_PUBLISH_TOKEN }}
+          PUBLISH_USERNAME: ${{ secrets.PACKAGE_PUBLISH_USERNAME }}
+          PUBLISH_PASSWORD: ${{ secrets.PACKAGE_PUBLISH_PASSWORD }}
+          UV_NO_PROGRESS: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$PUBLISH_URL" ]]; then
+            echo "::error::Set PACKAGE_PUBLISH_URL before enabling deployment."
+            exit 1
+          fi
+          if [[ -n "$PUBLISH_TOKEN" ]]; then
+            export UV_PUBLISH_TOKEN="$PUBLISH_TOKEN"
+          elif [[ -n "$PUBLISH_USERNAME" && -n "$PUBLISH_PASSWORD" ]]; then
+            export UV_PUBLISH_USERNAME="$PUBLISH_USERNAME"
+            export UV_PUBLISH_PASSWORD="$PUBLISH_PASSWORD"
+          else
+            echo "::error::Configure a publish token or a publish username/password pair."
+            exit 1
+          fi
+          # No checkout or repository code runs in this credential-bearing job.
+          # Do not silently skip duplicate versions or mark failed uploads green.
+          uv publish --publish-url "$PUBLISH_URL" dist/*

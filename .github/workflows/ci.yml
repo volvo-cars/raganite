@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      PYTHON_INDEX_USERNAME:
+        required: false
+      PYTHON_INDEX_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_NO_PROGRESS: "1"
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  quality:
+    name: Lint and types
+    # Private Artifactory may require an ephemeral, network-enabled runner.
+    # Do not expose a persistent self-hosted runner to untrusted fork PRs.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up dependencies
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: "3.13"
+          registry-url: ${{ vars.PYTHON_INDEX_URL || 'https://ara-artifactory.volvocars.biz/artifactory/api/pypi/PYPI/simple' }}
+          registry-username: ${{ secrets.PYTHON_INDEX_USERNAME }}
+          registry-password: ${{ secrets.PYTHON_INDEX_PASSWORD }}
+      - name: Install development dependencies
+        run: uv sync --group dev
+      - name: Lint source, benchmark harness, and tests
+        run: uv run ruff check src
+      - name: Type-check against the minimum supported Python
+        run: uv run mypy --python-version 3.11
+      - name: Type-check with ty
+        run: uv run ty check
+      - name: Remove registry credentials
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/uv-credentials"
+
+  tests:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up dependencies
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: ${{ matrix.python }}
+          registry-url: ${{ vars.PYTHON_INDEX_URL || 'https://ara-artifactory.volvocars.biz/artifactory/api/pypi/PYPI/simple' }}
+          registry-username: ${{ secrets.PYTHON_INDEX_USERNAME }}
+          registry-password: ${{ secrets.PYTHON_INDEX_PASSWORD }}
+      - name: Install development dependencies
+        run: uv sync --group dev
+      - name: Run offline tests
+        # Tests use local doubles; no Azure/OpenAI keys or live Neo4j are passed.
+        run: uv run pytest --junitxml=test-results/pytest.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-python-${{ matrix.python }}
+          path: test-results/pytest.xml
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Remove registry credentials
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/uv-credentials"
+
+  required:
+    name: Required checks
+    if: always()
+    needs: [quality, tests]
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    steps:
+      - name: Require every CI job to succeed
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          TEST_RESULT: ${{ needs.tests.result }}
+        shell: bash
+        run: |
+          if [[ "$QUALITY_RESULT" != success || "$TEST_RESULT" != success ]]; then
+            echo "::error::All lint, type, and Python-matrix test jobs must pass."
+            exit 1
+          fi

@@ -1,0 +1,54 @@
+name: Set up Python and uv
+description: Configure Python, uv, and the registry used by the checked-in lockfile.
+
+inputs:
+  python-version:
+    description: Python version to install.
+    required: false
+    default: "3.13"
+  registry-url:
+    description: Package download index; must match the registry in uv.lock.
+    required: false
+    default: https://ara-artifactory.volvocars.biz/artifactory/api/pypi/PYPI/simple
+  registry-username:
+    description: Optional private-index username; pass a repository secret.
+    required: false
+  registry-password:
+    description: Optional private-index password or access token; pass a repository secret.
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        version: "0.9.27"
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+
+    - name: Configure package index
+      shell: bash
+      env:
+        REGISTRY_URL: ${{ inputs.registry-url }}
+        REGISTRY_USERNAME: ${{ inputs.registry-username }}
+        REGISTRY_PASSWORD: ${{ inputs.registry-password }}
+      run: |
+        set -euo pipefail
+        # Credentials stay outside the workspace/cache and are never echoed.
+        echo "UV_DEFAULT_INDEX=$REGISTRY_URL" >> "$GITHUB_ENV"
+        echo "UV_CREDENTIALS_DIR=$RUNNER_TEMP/uv-credentials" >> "$GITHUB_ENV"
+        export UV_CREDENTIALS_DIR="$RUNNER_TEMP/uv-credentials"
+        if [[ -n "$REGISTRY_USERNAME" || -n "$REGISTRY_PASSWORD" ]]; then
+          if [[ -z "$REGISTRY_USERNAME" || -z "$REGISTRY_PASSWORD" ]]; then
+            echo "::error::Set both PYTHON_INDEX_USERNAME and PYTHON_INDEX_PASSWORD secrets."
+            exit 1
+          fi
+          printf '%s' "$REGISTRY_PASSWORD" |
+            uv auth login "$REGISTRY_URL" --username "$REGISTRY_USERNAME" --password-stdin
+        fi

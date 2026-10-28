@@ -1,0 +1,19 @@
+# Local Neo4j for a from-scratch benchmark.
+# From the repository root:
+#   docker compose -f benchmark/neo4j/docker-compose.yml up -d
+# Then:
+#   python -m benchmark hotpotqa --backend neo4j --questions 200
+services:
+  neo4j:
+    image: neo4j:5.26
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/raganite-local
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1G
+    volumes:
+      - neo4j_data:/data
+volumes:
+  neo4j_data:

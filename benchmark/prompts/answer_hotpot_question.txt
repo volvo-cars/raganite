@@ -1,0 +1,3 @@
+Answer the question using the provided context. Be as brief as possible.
+Each entry in the context is a paragraph retrieved from the knowledge graph.
+Return only the short factual answer — no preamble, no explanation.

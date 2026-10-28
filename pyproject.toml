@@ -1,0 +1,117 @@
+[project]
+name = "raganite"
+version = "0.1.0"
+description = "Raganite — Simple Graph RAG library"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11,<3.14"
+authors = [
+    { name = "Sattar Akbari", email = "sakbari@volvocars.com" },
+    { name = "Jiaao Tong" , email = "jtong7@volvocars.com"},
+]
+keywords = ["graph-rag", "rag", "knowledge-graph", "retrieval", "langchain"]
+dependencies = [
+    "click>=8.1,<9",
+    "httpx>=0.28.1",
+    "langchain>=1.4.7",
+    "langchain-core>=1.7.0",
+    "langchain-openai>=1.7.2",
+    "langchain-text-splitters>=1.1.3",
+    "neo4j>=6.4.1",
+    "neo4j-graphrag>=1.22.0",
+    "pydantic>=2.14.1",
+    "pydantic-settings>=2.16.1",
+    "python-dotenv>=1.2.4",
+]
+
+[project.scripts]
+raganite = "raganite.cli:main"
+raganite-bench = "benchmark.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/raganite", "benchmark"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "src", "tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["E501", "B905"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["B011", "B017"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src"]
+check_untyped_defs = true
+ignore_missing_imports = true
+no_implicit_optional = true
+show_error_codes = true
+warn_redundant_casts = true
+exclude = ["build/", "dist/"]
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+include = ["src"]
+
+[tool.towncrier]
+package = "raganite"
+package_dir = "src"
+filename = "CHANGELOG.md"
+directory = "changes"
+title_format = "## [{version}] - {project_date}"
+issue_format = "[#{issue}](https://github.com/volvo-cars/raganite/issues/{issue})"
+wrap = true
+
+[[tool.towncrier.type]]
+directory = "added"
+name = "Added"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "changed"
+name = "Changed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "deprecated"
+name = "Deprecated"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "removed"
+name = "Removed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "fixed"
+name = "Fixed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "security"
+name = "Security"
+showcontent = true
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.1",
+    "ruff>=0.17.2",
+    "ty>=0.0.34",
+]
+
