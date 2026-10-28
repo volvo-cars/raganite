@@ -2,7 +2,7 @@
 
 ## Benchmarks
 
-These are the the latest benchmark runs.  The full tables are in [Benchmarks](docs/guides/benchmarking.md).
+These are the latest benchmark runs.  The full tables are in [Benchmarks](docs/guides/benchmarking.md).
 
 | Benchmark | Score | What it counts |
 | --- | --- | --- |
@@ -85,13 +85,9 @@ uv run raganite --help
 
 You should see `init`, `config`, `index`, `retrieve`, and `clear`. Install details are in [Installation](docs/getting-started/installation.md).
 
-## Self-Hosted Server
+## Neo4j
 
-SQLite needs no server. When you want Neo4j, you run that database yourself and point Raganite at it. The retrieve call stays the same. Steps are in [Neo4j](docs/guides/neo4j.md).
-
-## Cloud Platform
-
-There is no hosted Raganite service. You run the library on your machine, with SQLite or your own Neo4j.
+Run Neo4j yourself and point Raganite at it. The retrieve call stays the same. Steps are in [Neo4j](docs/guides/neo4j.md).
 
 ## CLI
 
@@ -121,9 +117,9 @@ print(passages[0].text)
 
 `passages[0].evidence` lists the facts used in the ranking. Classes are in the [Python API](docs/reference/python-api.md).
 
-## Integrations & Demos
+## Model providers
 
-OpenAI and Azure OpenAI are the model providers. Indexing accepts LangChain `Document` objects. There is no separate demo app. [Model providers](docs/guides/providers.md) shows both clients.
+OpenAI and Azure OpenAI are the model providers. Indexing accepts LangChain `Document` objects. [Model providers](docs/guides/providers.md) shows both clients.
 
 ## Documentation & Support
 
