@@ -5,11 +5,6 @@ on:
   merge_group:
   workflow_dispatch:
   workflow_call:
-    secrets:
-      PYTHON_INDEX_USERNAME:
-        required: false
-      PYTHON_INDEX_PASSWORD:
-        required: false
 
 permissions:
   contents: read
@@ -26,8 +21,6 @@ env:
 jobs:
   quality:
     name: Lint and types
-    # Private Artifactory may require an ephemeral, network-enabled runner.
-    # Do not expose a persistent self-hosted runner to untrusted fork PRs.
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
@@ -39,9 +32,6 @@ jobs:
         uses: ./.github/actions/setup-python
         with:
           python-version: "3.13"
-          registry-url: ${{ vars.PYTHON_INDEX_URL || 'https://ara-artifactory.volvocars.biz/artifactory/api/pypi/PYPI/simple' }}
-          registry-username: ${{ secrets.PYTHON_INDEX_USERNAME }}
-          registry-password: ${{ secrets.PYTHON_INDEX_PASSWORD }}
       - name: Install development dependencies
         run: uv sync --group dev
       - name: Lint source, benchmark harness, and tests
@@ -50,10 +40,6 @@ jobs:
         run: uv run mypy --python-version 3.11
       - name: Type-check with ty
         run: uv run ty check
-      - name: Remove registry credentials
-        if: always()
-        shell: bash
-        run: rm -rf "$RUNNER_TEMP/uv-credentials"
 
   tests:
     name: Tests (Python ${{ matrix.python }})
@@ -72,9 +58,6 @@ jobs:
         uses: ./.github/actions/setup-python
         with:
           python-version: ${{ matrix.python }}
-          registry-url: ${{ vars.PYTHON_INDEX_URL || 'https://ara-artifactory.volvocars.biz/artifactory/api/pypi/PYPI/simple' }}
-          registry-username: ${{ secrets.PYTHON_INDEX_USERNAME }}
-          registry-password: ${{ secrets.PYTHON_INDEX_PASSWORD }}
       - name: Install development dependencies
         run: uv sync --group dev
       - name: Run offline tests
@@ -88,10 +71,6 @@ jobs:
           path: test-results/pytest.xml
           if-no-files-found: ignore
           retention-days: 14
-      - name: Remove registry credentials
-        if: always()
-        shell: bash
-        run: rm -rf "$RUNNER_TEMP/uv-credentials"
 
   required:
     name: Required checks

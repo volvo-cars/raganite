@@ -85,9 +85,6 @@ jobs:
     name: Package checks
     needs: source
     uses: ./.github/workflows/ci.yml
-    secrets:
-      PYTHON_INDEX_USERNAME: ${{ secrets.PYTHON_INDEX_USERNAME }}
-      PYTHON_INDEX_PASSWORD: ${{ secrets.PYTHON_INDEX_PASSWORD }}
 
   build:
     name: Build distribution
@@ -106,9 +103,6 @@ jobs:
         uses: ./.github/actions/setup-python
         with:
           python-version: "3.13"
-          registry-url: ${{ vars.PYTHON_INDEX_URL || 'https://pypi.org/simple' }}
-          registry-username: ${{ secrets.PYTHON_INDEX_USERNAME }}
-          registry-password: ${{ secrets.PYTHON_INDEX_PASSWORD }}
       - name: Install production dependencies
         run: uv sync --no-dev
       - name: Read package version
@@ -155,10 +149,6 @@ jobs:
               echo "Publishing is enabled for approved releases only; see the release/publish jobs."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: Remove registry credentials
-        if: always()
-        shell: bash
-        run: rm -rf "$RUNNER_TEMP/uv-credentials"
   # Protect this environment with required reviewers in repository settings.
   # Only this job may create tags/releases; no release PRs are created here,
   # so pull-requests: write is intentionally not granted.
@@ -192,11 +182,11 @@ jobs:
             --title "Raganite ${RELEASE_VERSION}" \
             --generate-notes
 
-  # Keep ENABLE_PACKAGE_PUBLISH unset/false until registry deployment is wanted.
+  # Keep ENABLE_PACKAGE_PUBLISH unset/false until PyPI deployment is wanted.
   # GITHUB_TOKEN-created releases do not trigger another release workflow run,
   # so an approved creation above continues to publish within this same run.
   # UI/API-published releases run source validation, CI and a fresh build first.
-  # Protect package-publish with required reviewers to approve each registry upload.
+  # Protect package-publish with required reviewers to approve each PyPI upload.
   publish:
     name: Publish approved release (opt-in)
     needs: [build, create-release]
@@ -223,9 +213,8 @@ jobs:
           artifact-ids: ${{ needs.build.outputs.artifact-id }}
           path: dist
           merge-multiple: true
-      - name: Publish to the explicitly configured registry
+      - name: Publish to official PyPI
         env:
-          PUBLISH_URL: ${{ vars.PACKAGE_PUBLISH_URL }}
           PUBLISH_TOKEN: ${{ secrets.PACKAGE_PUBLISH_TOKEN }}
           PUBLISH_USERNAME: ${{ secrets.PACKAGE_PUBLISH_USERNAME }}
           PUBLISH_PASSWORD: ${{ secrets.PACKAGE_PUBLISH_PASSWORD }}
@@ -233,10 +222,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "$PUBLISH_URL" ]]; then
-            echo "::error::Set PACKAGE_PUBLISH_URL before enabling deployment."
-            exit 1
-          fi
           if [[ -n "$PUBLISH_TOKEN" ]]; then
             export UV_PUBLISH_TOKEN="$PUBLISH_TOKEN"
           elif [[ -n "$PUBLISH_USERNAME" && -n "$PUBLISH_PASSWORD" ]]; then
@@ -248,4 +233,4 @@ jobs:
           fi
           # No checkout or repository code runs in this credential-bearing job.
           # Do not silently skip duplicate versions or mark failed uploads green.
-          uv publish --publish-url "$PUBLISH_URL" dist/*
+          uv publish --publish-url https://upload.pypi.org/legacy/ dist/*

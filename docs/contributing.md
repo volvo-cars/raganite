@@ -401,9 +401,12 @@ Registry publication still requires all of the following:
 - Successful source validation, CI, and package build.
 - Repository variable `ENABLE_PACKAGE_PUBLISH` set to the literal string `true`.
 - Approval for the `package-publish` environment, when its protection rules require it.
-- An explicit `PACKAGE_PUBLISH_URL` upload endpoint and either a
-  `PACKAGE_PUBLISH_TOKEN` secret or the `PACKAGE_PUBLISH_USERNAME` /
+- A PyPI `PACKAGE_PUBLISH_TOKEN` secret or the `PACKAGE_PUBLISH_USERNAME` /
   `PACKAGE_PUBLISH_PASSWORD` secret pair.
+
+Dependencies use the official PyPI Simple index at `https://pypi.org/simple`.
+Publication uses PyPI's upload endpoint at `https://upload.pypi.org/legacy/`;
+no custom registry URL is configured.
 
 **Before enabling publication**, administrators must configure required reviewers
 for the `github-release` and `package-publish` environments under **Settings →

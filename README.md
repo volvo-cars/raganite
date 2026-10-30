@@ -1,21 +1,8 @@
 # Raganite
 
-## Benchmarks
+These pages show you how to install Raganite, index documents, and retrieve passages for a question.
 
-These are the latest benchmark runs.  The full tables are in [Benchmarks](docs/guides/benchmarking.md).
-
-| Benchmark | Score | What it counts |
-| --- | --- | --- |
-| HotpotQA exact match | 60.9% | 1,000 questions, short answer matches the gold text |
-| HotpotQA answer F1 | 76.2% | Same questions, token overlap with the gold answer |
-| HotpotQA recall at 5 | 95.7% | A supporting passage is in the top 5 |
-| LoCoMo judge | 66.6% | 1,540 questions, adversarial left out, one pass |
-| LoCoMo token F1 | 54.3% | Same 1,540 questions |
-| LoCoMo single-hop judge | 79.5% | 841 questions |
-
-To run the same checks, follow [Run the benchmarks](docs/guides/run-benchmarks.md).
-
-
+Raganite builds a knowledge graph from your files, then returns the passages that help answer a question. It does not write the answer. Your own model can do that from the passages it returns.
 
 ## Research Highlights
 
@@ -131,6 +118,21 @@ OpenAI and Azure OpenAI are the model providers. Indexing accepts LangChain `Doc
 | Choose OpenAI or Azure | [Model providers](docs/guides/providers.md) |
 | Separate graphs | [Namespaces](docs/guides/namespaces.md) |
 | Read the scores in full | [Benchmarks](docs/guides/benchmarking.md) |
+
+## Benchmarks
+
+These are the latest benchmark runs. The full tables are in [Benchmarks](docs/guides/benchmarking.md).
+
+| Benchmark | Score | What it counts |
+| --- | --- | --- |
+| HotpotQA exact match | 60.9% | 1,000 questions, short answer matches the gold text |
+| HotpotQA answer F1 | 76.2% | Same questions, token overlap with the gold answer |
+| HotpotQA recall at 5 | 95.7% | A supporting passage is in the top 5 |
+| LoCoMo judge | 66.6% | 1,540 questions, adversarial left out, one pass |
+| LoCoMo token F1 | 54.3% | Same 1,540 questions |
+| LoCoMo single-hop judge | 79.5% | 841 questions |
+
+To run the same checks, follow [Run the benchmarks](docs/guides/run-benchmarks.md).
 
 ## License
 
