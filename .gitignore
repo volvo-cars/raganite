@@ -157,4 +157,5 @@ Reports/*
 .raganite/
 benchmark/data/
 benchmark/results/
+benchmark/GraphRAG-Benchmark/
 

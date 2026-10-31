@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+from dataclasses import asdict
 from pathlib import Path
 
 from langchain_core.documents import Document
@@ -217,44 +218,52 @@ async def _score_hotpot_question(
     completed,
     total,
 ):
-    rows = [
-        {
-            "source": passage.source,
-            "text": passage.text,
-            "score": passage.score,
-            "node_id": passage.source,
+    from raganite.clients.llm.usage import track_run, usage_stage
+
+    with track_run("benchmark") as usage:
+        rows = [
+            {
+                "source": passage.source,
+                "text": passage.text,
+                "score": passage.score,
+                "node_id": passage.source,
+            }
+            for passage in await retriever.aretrieve(query["question"])
+        ]
+        passages = passages_from_rows(rows, title_map, top_k)
+        gold_titles = sorted({title for title, _ in query["supporting_facts"]})
+        answers = query["answer"] if isinstance(query["answer"], list) else [query["answer"]]
+        item = {
+            "id": query["_id"],
+            "question": query["question"],
+            "gold_answers": answers,
+            "gold_titles": gold_titles,
+            "retrieved": passages,
+            "retrieval_metrics": retrieval_metrics([p["title"] for p in passages], gold_titles),
         }
-        for passage in await retriever.aretrieve(query["question"])
-    ]
-    passages = passages_from_rows(rows, title_map, top_k)
-    gold_titles = sorted({title for title, _ in query["supporting_facts"]})
-    answers = query["answer"] if isinstance(query["answer"], list) else [query["answer"]]
-    item = {
-        "id": query["_id"],
-        "question": query["question"],
-        "gold_answers": answers,
-        "gold_titles": gold_titles,
-        "retrieved": passages,
-        "retrieval_metrics": retrieval_metrics([p["title"] for p in passages], gold_titles),
-    }
-    if answer_model is not None:
-        context = "\n\n".join(
-            f"[{i}] {p['title']}\n{p['text']}" for i, p in enumerate(passages[:qa_top_k], 1)
-        )
-        try:
-            response = await answer_model.ainvoke(
-                [
-                    ("system", system),
-                    ("user", f"Context:\n{context}\n\nQuestion: {query['question']}\n\nAnswer:"),
-                ]
+        if answer_model is not None:
+            context = "\n\n".join(
+                f"[{i}] {p['title']}\n{p['text']}" for i, p in enumerate(passages[:qa_top_k], 1)
             )
-            item["answer"] = response.text.strip()
-        except BadRequestError as exc:
-            if not isinstance(exc.body, dict) or exc.body.get("code") != "content_filter":
-                raise
-            item["answer"] = ""
-            item["answer_error"] = "azure_content_filter"
-        item["answer_metrics"] = answer_metrics(item["answer"], answers)
+            try:
+                with usage_stage("benchmark.answer"):
+                    response = await answer_model.ainvoke(
+                        [
+                            ("system", system),
+                            (
+                                "user",
+                                f"Context:\n{context}\n\nQuestion: {query['question']}\n\nAnswer:",
+                            ),
+                        ]
+                    )
+                item["answer"] = response.text.strip()
+            except BadRequestError as exc:
+                if not isinstance(exc.body, dict) or exc.body.get("code") != "content_filter":
+                    raise
+                item["answer"] = ""
+                item["answer_error"] = "azure_content_filter"
+            item["answer_metrics"] = answer_metrics(item["answer"], answers)
+    item["usage"] = asdict(usage)
     async with lock:
         with output.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(item, ensure_ascii=False) + "\n")
@@ -328,7 +337,8 @@ def run_hotpotqa_benchmark(options) -> None:
         if report is not None:
             print(
                 f"Indexed {len(report.indexed_files)} passages, "
-                f"skipped {len(report.skipped_files)}, failed {len(report.failed_files)}",
+                f"skipped {len(report.skipped_files)}, failed {len(report.failed_files)}, "
+                f"{report.usage.total_tokens} tokens in {report.usage.elapsed_seconds:.1f}s",
                 flush=True,
             )
         retriever = Retriever(

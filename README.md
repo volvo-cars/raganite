@@ -70,7 +70,7 @@ uv sync
 uv run raganite --help
 ```
 
-You should see `init`, `config`, `index`, `retrieve`, and `clear`. Install details are in [Installation](docs/getting-started/installation.md).
+You should see `init`, `config`, `index`, `retrieve`, `query`, and `clear`. Install details are in [Installation](docs/getting-started/installation.md).
 
 ## Neo4j
 
@@ -81,6 +81,7 @@ Run Neo4j yourself and point Raganite at it. The retrieve call stays the same. S
 ```sh
 uv run raganite index documents --source notes
 uv run raganite retrieve "What is the capital of France?" --top-k 5 --format text
+uv run raganite query "What is the capital of France?" --top-k 5 --format text
 ```
 
 Flags are in the [command line reference](docs/reference/cli.md).
@@ -97,16 +98,18 @@ chat = OpenAILLMClient(model="gpt-4o", use_responses_api=False)
 
 with KnowledgeGraph(embeddings=embeddings, llm=chat) as graph:
     passages = graph.retrieve("What is the capital of France?", top_k=5)
+    answered = graph.query("What is the capital of France?", top_k=5)
 
 print(passages[0].title)
 print(passages[0].text)
+print(answered.answer)
 ```
 
 `passages[0].evidence` lists the facts used in the ranking. Classes are in the [Python API](docs/reference/python-api.md).
 
 ## Model providers
 
-OpenAI and Azure OpenAI are the model providers. Indexing accepts LangChain `Document` objects. [Model providers](docs/guides/providers.md) shows both clients.
+OpenAI, Azure OpenAI, and Hugging Face can each supply the chat model and the embedding model. Ollama can supply the chat model. Indexing accepts LangChain `Document` objects. [Model providers](docs/guides/providers.md) shows the clients.
 
 ## Documentation & Support
 

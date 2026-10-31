@@ -53,9 +53,11 @@ def load_config(
     settings then override the config file, and explicit CLI overrides win last.
     Calling this function with env_file=None does not load a dotenv file.
     """
-    if env_file is not None:
-        if not env_file.is_file():
-            raise FileNotFoundError(env_file)
+    if path is None:
+        path = _config_file_in_cwd()
+    if env_file is None:
+        load_dotenv(override=False)
+    else:
         load_dotenv(env_file, override=False)
     data: dict[str, Any] = {}
     if path is not None:
@@ -70,3 +72,12 @@ def load_config(
             raise ValueError("Config must contain an object of Raganite settings")
     data = _merge(data, EnvSettingsSource(RaganiteConfig)())
     return RaganiteConfig(**_merge(data, overrides or {}))
+
+
+def _config_file_in_cwd():
+    """Return a config file in the current working directory, if any."""
+    for name in ("raganite.json", "raganite.toml"):
+        path = Path.cwd() / name
+        if path.is_file():
+            return path
+    return None

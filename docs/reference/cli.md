@@ -19,11 +19,11 @@ After `uv sync`, run commands with `uv run raganite`. The entry point is `ragani
 | `--namespace NAME` | Graph namespace. Default `default` |
 | `--dimensions N` | Embedding length. Default `1536`. Must match the model and the stored vectors |
 | `--workers N` | Indexing and retrieval workers. Default is the available CPU count |
-| `--provider openai\|azure-openai` | Provider for the CLI chat and embedding clients. Default `openai` |
-| `--chat-model NAME` | Chat model or Azure deployment. Default `gpt-4o` |
-| `--embedding-model NAME` | Embedding model or Azure deployment. Default `text-embedding-3-small` |
+| `--provider openai\|azure-openai\|huggingface\|huggingface-endpoint` | Provider for both the chat and embedding clients. Default `openai`. `huggingface` is local. `huggingface-endpoint` is hosted. Set `RAGANITE_CHAT__PROVIDER` and `RAGANITE_EMBEDDINGS__PROVIDER` separately when the two roles differ |
+| `--chat-model NAME` | Chat model, Azure deployment, Hugging Face model id, or Ollama tag. Default `gpt-4o`. Ollama chat is `RAGANITE_CHAT__PROVIDER=ollama`, because `--provider` also sets embeddings and Ollama has no embedding client |
+| `--embedding-model NAME` | Embedding model, Azure deployment, or Hugging Face model id. Default `text-embedding-3-small` |
 | `--api-version VERSION` | Dated Azure API version. Omit it to use the Azure v1 clients |
-| `--format text\|json` | `text` for `retrieve` by default; `json` for the other commands |
+| `--format text\|json` | `text` for `retrieve` and `query` by default; `json` for the other commands |
 
 CLI flags override environment variables, which override `.env`, which overrides `--config`, which overrides built-in defaults.
 
@@ -57,7 +57,7 @@ raganite index [PATH] [--source NAME] [--document-path PATH] [--force] [--schema
 | One file, or stdin | Does not delete other files in the source |
 | Unchanged content | Skipped, unless `--force` |
 
-`--source` defaults to the directory name, or `documents` for a file or stdin. `--schema-mode` defaults to `fixed`.
+`--source` defaults to the directory name, or `documents` for a file or stdin. `--schema-mode` defaults to `free`: the model names entities and relations from the text. `fixed` uses `--schema` or the built-in code schema. `extracted` infers a schema from the input. Passing `--schema` selects `fixed` unless `--schema-mode` is set.
 
 ## `retrieve`
 
@@ -68,6 +68,16 @@ raganite retrieve QUESTION [--top-k N] [--format text|json]
 Returns passages and fact evidence. It does not generate an answer. The store is opened read-only.
 
 `--top-k` defaults to `5`. `--format text` is the human-readable default. `--format json` adds scores, evidence, and metadata.
+
+## `query`
+
+```sh
+raganite query QUESTION [--top-k N] [--format text|json]
+```
+
+Retrieves passages, then answers from those passages. The store is opened read-only. A chat model is required.
+
+`--top-k` defaults to `5` and limits the passages given to the answer. `--format text` prints the answer, then the passages. `--format json` also includes token and timing usage.
 
 ## `clear`
 

@@ -21,6 +21,12 @@ from .azure_openai import (
     AzureOpenAILLMClient,
 )
 from .base import CompletionClient, EmbeddingClient, LLMClient
+from .huggingface import (
+    HuggingFaceEmbeddingClient,
+    HuggingFaceEndpointEmbeddingClient,
+    HuggingFaceLLMClient,
+)
+from .ollama import OllamaLLMClient
 from .openai import OpenAICompletionClient, OpenAIEmbeddingClient, OpenAILLMClient
 
 __all__ = [
@@ -29,7 +35,11 @@ __all__ = [
     "AzureOpenAILLMClient",
     "CompletionClient",
     "EmbeddingClient",
+    "HuggingFaceEmbeddingClient",
+    "HuggingFaceEndpointEmbeddingClient",
+    "HuggingFaceLLMClient",
     "LLMClient",
+    "OllamaLLMClient",
     "OpenAICompletionClient",
     "OpenAIEmbeddingClient",
     "OpenAILLMClient",

@@ -43,7 +43,7 @@ Accessing `.indexer` without a chat model raises `ValueError`.
 
 ## What gets stored
 
-Each document becomes chunks. The chat model names entities and the relations between them. By default those relations are also stored as facts (`indexing.index_facts` is `true`). Shared entities stay in the namespace until the last document that mentioned them is removed.
+Each document becomes chunks. The chat model names entities and the relations between them. That extraction is unconstrained (`schema_mode` is `free`). `fixed` limits it to the built-in code schema, or to a schema you supply. `extracted` infers a schema from the document first. By default those relations are also stored as facts (`indexing.index_facts` is `true`). Shared entities stay in the namespace until the last document that mentioned them is removed.
 
 Chunk size defaults to 1500 characters with 200 characters of overlap. Overlap must be smaller than the chunk size.
 

@@ -23,7 +23,7 @@ from raganite.backends import GraphBackend, create_backend
 from raganite.clients.llm import EmbeddingClient, LLMClient
 from raganite.config import RaganiteConfig
 from raganite.indexing import KnowledgeGraphIndexer
-from raganite.retrieval import Passage, Retriever
+from raganite.retrieval import Answer, RetrievalResult, Retriever
 
 
 class KnowledgeGraph:
@@ -79,9 +79,13 @@ class KnowledgeGraph:
             )
         return self._retriever
 
-    def retrieve(self, question: str, *, top_k: int | None = None) -> list[Passage]:
+    def retrieve(self, question: str, *, top_k: int | None = None) -> RetrievalResult:
         """Return fact-expanded and reranked passages for a question."""
         return self.retriever.retrieve(question, top_k=top_k)
+
+    def query(self, question: str, *, top_k: int | None = None) -> Answer:
+        """Retrieve passages for a question, then answer from those passages."""
+        return self.retriever.query(question, top_k=top_k)
 
     @property
     def indexer(self) -> KnowledgeGraphIndexer:

@@ -27,7 +27,8 @@ KnowledgeGraph(
 
 | Member | Returns | Errors |
 | --- | --- | --- |
-| `retrieve(question, *, top_k=None)` | `list[Passage]` | `ValueError` on a blank question or `top_k < 1` |
+| `retrieve(question, *, top_k=None)` | `RetrievalResult` | `ValueError` on a blank question or `top_k < 1` |
+| `query(question, *, top_k=None)` | `Answer` | `ValueError` on a blank question, `top_k < 1`, or a missing LLM |
 | `indexer` | `KnowledgeGraphIndexer` | `ValueError` if `llm` was omitted |
 | `retriever` | `Retriever` | Built on first use. Default ranking also requires `llm` |
 | `close()` | `None` | Closes retrieval workers and a backend this object created |
@@ -61,10 +62,18 @@ Retriever(
 
 | Method | Returns |
 | --- | --- |
-| `retrieve(query, *, top_k=None)` | `list[Passage]` |
-| `retrieve_many(queries, *, top_k=None)` | `list[list[Passage]]` |
-| `aretrieve(query, *, top_k=None)` | awaitable `list[Passage]` |
+| `retrieve(query, *, top_k=None)` | `RetrievalResult` |
+| `retrieve_many(queries, *, top_k=None)` | `list[RetrievalResult]` |
+| `aretrieve(query, *, top_k=None)` | awaitable `RetrievalResult` |
+| `query(question, *, top_k=None)` | `Answer` |
+| `aquery(question, *, top_k=None)` | awaitable `Answer` |
 | `close()` | Stops the worker pool |
+
+### `Answer`
+
+Frozen. Fields: `question`, `answer`, `passages`, `usage`. `passages` are the retrieval result. `usage` includes the retrieval stages and `query.answer`.
+
+The answer call uses `RetrievalConfig.llm_options` without `response_format`, so ranking can stay JSON while the answer stays plain text.
 
 If `use_triples` is true, `Retriever` calls `backend.prepare()` at construction. If `filter_triples` or `rerank_passages` is true, `llm` is required.
 
@@ -98,7 +107,7 @@ Fields: `backend`, `namespace`, `embedding_dimensions`, `chat`, `embeddings`, `i
 
 `RetrievalConfig` defaults: `top_k=200`, `use_triples=True`, `filter_triples=True`, `rerank_passages=True`, `expansion_depth=2`. `filtered_triple_k` cannot exceed `triple_top_k`.
 
-`IndexingConfig.index_facts` defaults to `True`. `ChunkingConfig` defaults to 1500 characters and 200 overlap.
+`IndexingConfig.index_facts` defaults to `True`. `IndexingConfig.schema_mode` defaults to `free`, so extraction is not limited to `default_schema`. `fixed` uses that code schema, or `graph_schema` when one is set. `ChunkingConfig` defaults to 1500 characters and 200 overlap.
 
 `Neo4jConfig.layout` is `owned` or `native`. `SQLiteConfig.path` defaults to `.raganite/graph.sqlite3`.
 
@@ -128,10 +137,14 @@ Reads used by retrieval: `prepare`, `direct_passages`, `search_facts`, `expand_f
 
 `LLMClient`, `EmbeddingClient`, and `CompletionClient` each expose a LangChain model on `.model`.
 
-| OpenAI | Azure |
-| --- | --- |
-| `OpenAILLMClient` | `AzureOpenAILLMClient` |
-| `OpenAIEmbeddingClient` | `AzureOpenAIEmbeddingClient` |
-| `OpenAICompletionClient` | `AzureOpenAICompletionClient` |
+| OpenAI | Azure | Hugging Face |
+| --- | --- | --- |
+| `OpenAILLMClient` | `AzureOpenAILLMClient` | `HuggingFaceLLMClient` |
+| `OpenAIEmbeddingClient` | `AzureOpenAIEmbeddingClient` | `HuggingFaceEmbeddingClient`, `HuggingFaceEndpointEmbeddingClient` |
+| `OpenAICompletionClient` | `AzureOpenAICompletionClient` | — |
+
+The Hugging Face clients need `uv sync --extra huggingface`. `HuggingFaceLLMClient` wraps `ChatHuggingFace`. `backend="pipeline"` runs the chat model locally, and `backend="endpoint"` calls a hosted Inference Provider. `HuggingFaceEmbeddingClient` runs a Sentence Transformers model locally. `HuggingFaceEndpointEmbeddingClient` calls a hosted embedding endpoint.
+
+`OllamaLLMClient` wraps `ChatOllama` and needs `uv sync --extra ollama`. It is chat only.
 
 Constructor keyword arguments are LangChain's. See [Model providers](../guides/providers.md).
