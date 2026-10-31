@@ -380,10 +380,11 @@ class Retriever:
 
         return list(self._pool.map(retrieve_one, jobs))
 
-    async def aretrieve(self, query: str, *, top_k: int | None = None) -> list[Passage]:
+    async def aretrieve(self, query: str, *, top_k: int | None = None) -> RetrievalResult:
+        context = contextvars.copy_context()
         return await asyncio.get_running_loop().run_in_executor(
             self._pool,
-            lambda: self.retrieve(query, top_k=top_k),
+            lambda: context.run(self.retrieve, query, top_k=top_k),
         )
 
     def close(self) -> None:

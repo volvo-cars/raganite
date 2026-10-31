@@ -11,7 +11,6 @@ After `uv sync`, run commands with `uv run raganite`. The entry point is `ragani
 | Option | Meaning |
 | --- | --- |
 | `--env-file PATH` | Dotenv file. Default is `.env` in the current directory, if present |
-| `--no-env-file` | Do not load a dotenv file |
 | `--config PATH` | JSON or TOML settings |
 | `--backend sqlite\|neo4j` | Store kind. Default `sqlite` |
 | `--sqlite-path PATH` | SQLite file. Default `.raganite/graph.sqlite3` |

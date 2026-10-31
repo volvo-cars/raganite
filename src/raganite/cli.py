@@ -36,7 +36,6 @@ def _common_options(command):
             help="Dotenv file",
             show_default=".env in the current directory, if present",
         ),
-        click.option("--no-env-file", is_flag=True, default=None, help="Skip dotenv loading"),
         click.option(
             "--config",
             type=click.Path(exists=True, dir_okay=False, path_type=Path),
@@ -312,8 +311,6 @@ def _run(ctx: click.Context, command: str, **options: Any) -> None:
     elif command == "clear":
         values.setdefault("source", None)
     args = SimpleNamespace(command=command, **values)
-    if getattr(args, "no_env_file", False) and getattr(args, "env_file", None) is not None:
-        raise click.UsageError("--env-file and --no-env-file cannot be combined", ctx)
     if args.command == "clear" and not args.yes:
         raise click.UsageError(
             "clear requires --yes; without --source it deletes the entire configured namespace", ctx
@@ -330,11 +327,10 @@ def _run(ctx: click.Context, command: str, **options: Any) -> None:
     try:
         from raganite.config.loading import load_config
 
-        env_file = getattr(args, "env_file", None)
-        if not getattr(args, "no_env_file", False) and env_file is None and Path(".env").is_file():
-            env_file = Path(".env")
         config = load_config(
-            getattr(args, "config", None), env_file=env_file, overrides=_overrides(args)
+            getattr(args, "config", None),
+            env_file=getattr(args, "env_file", None),
+            overrides=_overrides(args),
         )
         exit_code = _execute(args, config)
     except KeyboardInterrupt:

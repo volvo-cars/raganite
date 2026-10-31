@@ -8,11 +8,11 @@ Highest priority wins:
 
 1. Values you pass to `RaganiteConfig` or to a CLI flag.
 2. Process environment variables.
-3. `.env` in the current directory, for the CLI only.
+3. `.env` in the current directory, when using the CLI or `load_config()`.
 4. A JSON or TOML file passed to `RaganiteConfig.from_file` or `raganite --config`.
 5. Built-in defaults.
 
-Library constructors do not read `.env` by themselves. The CLI loads `.env` from the working directory unless you pass `--no-env-file` or `--env-file`.
+Library constructors do not read `.env` by themselves. The CLI and `load_config()` load `.env` from the working directory if present, without searching parent directories. Use `--env-file PATH` (or `load_config(env_file=Path(...))`) to select another existing dotenv file. An explicitly selected file that does not exist is an error.
 
 ## Environment names
 

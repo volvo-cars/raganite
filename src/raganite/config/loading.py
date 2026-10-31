@@ -51,13 +51,18 @@ def load_config(
 
     Existing process variables take precedence over dotenv values. Environment
     settings then override the config file, and explicit CLI overrides win last.
-    Calling this function with env_file=None does not load a dotenv file.
+    When env_file is omitted, load .env from the current directory if present.
+    An explicitly requested dotenv file must exist.
     """
     if path is None:
         path = _config_file_in_cwd()
     if env_file is None:
-        load_dotenv(override=False)
+        default_env = Path.cwd() / ".env"
+        if default_env.is_file():
+            load_dotenv(default_env, override=False)
     else:
+        if not env_file.is_file():
+            raise FileNotFoundError(env_file)
         load_dotenv(env_file, override=False)
     data: dict[str, Any] = {}
     if path is not None:
