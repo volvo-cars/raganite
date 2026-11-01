@@ -25,7 +25,7 @@ uv uses `uv.lock` when it is compatible with the project settings and configured
 uv run raganite --help
 ```
 
-You should see the commands `init`, `config`, `index`, `retrieve`, and `clear`.
+You should see the commands `init`, `config`, `index`, `retrieve`, `query`, and `clear`.
 
 ## What you have
 

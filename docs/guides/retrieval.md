@@ -13,7 +13,7 @@ for passage in passages:
         print(fact.fact, fact.seed_entity, fact.related_entity)
 ```
 
-Each `Passage` has `source`, `title`, `text`, `score`, and `evidence`. `evidence` is empty when the passage came only from a direct chunk match.
+Each `Passage` has `source`, `title`, `text`, `score`, `evidence`, and `metadata`. `evidence` is empty when the passage came only from a direct chunk match. `passages.usage` records elapsed time and token totals for that retrieval run.
 
 `retrieve` embeds the question, finds matching chunks, and, by default, searches facts, expands them through the graph, fuses those hits, and asks the chat model to rerank. It does not generate an answer.
 
@@ -83,4 +83,4 @@ retriever.close()
 uv run raganite retrieve "What is the capital of France?" --top-k 5 --format text
 ```
 
-The command opens the store read-only. `--format json` includes scores, evidence, and metadata.
+The command opens the store read-only. `--format text` prints each passage's rank, title, source, score, and text. `--format json` prints the same passages as objects and adds `evidence` and metadata. That JSON list does not include `passages.usage`.

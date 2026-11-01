@@ -157,4 +157,4 @@ RAGANITE_CHAT__MODEL=llama3.2
 
 The embedding model's vector length must equal `RaganiteConfig.embedding_dimensions` and the stored index. The default is 1536, which matches `text-embedding-3-small` unless you request another size.
 
-The README in the repository has more client examples, including streaming and batch embed calls.
+Streaming, tools, structured output, and batch embedding are methods on the LangChain object at `client.model`.

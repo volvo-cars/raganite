@@ -35,7 +35,7 @@ Raganite creates the SQLite file, splits the text, extracts entities and facts, 
 uv run raganite retrieve "What is the capital of France?" --top-k 5 --format text
 ```
 
-The command prints the best passages and the facts that supported them. It does not call a model to write a final answer. Add `--format json` when you want scores and evidence in a machine-readable list.
+The command prints each passage's rank, title, source, score, and text. It does not print the supporting facts, and it does not write a final answer. Add `--format json` for those facts in `evidence`, plus metadata. `raganite query` uses the same index and writes an answer from the passages. See [Search and retrieval](../guides/retrieval.md).
 
 ## 5. Do the same from Python
 

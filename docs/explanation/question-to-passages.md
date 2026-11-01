@@ -16,13 +16,13 @@ An **entity** is a named thing in a chunk, such as a city or a person. A **fact*
 
 ## Topology and domain relations
 
-**Topology** is the structural connections: a source has documents, a document has chunks, a chunk mentions entities, and a fact points at its two entities. Those connections use stable names (`HAS_DOCUMENT`, `FROM_CHUNK`, `FACT_SUBJECT`, and so on).
+**Topology** is the structural connections: a source has documents, a document has chunks, a chunk mentions entities, and a fact points at its two entities. Those connections use stable names (`HAS_DOCUMENT`, `FROM_CHUNK`, `FACT_SUBJECT`, and so on). Documents that carry an integer `order` and a string `time` also get `IN_SESSION` and `NEXT` edges. [Indexing](../guides/indexing.md) shows when those edges are written.
 
 Domain relations, such as `CAPITAL_OF`, are not topology. They come from extraction and can differ by schema. Adapters store both. They do not invent a second set of structural names.
 
 ## Why retrieval looks at facts
 
-A chunk search finds text that is similar to the question. A fact search finds a statement, then walks from its entities back to chunks. Fusing both lists is why one passage can carry `evidence`: the facts that pulled it up. The chat model can drop weak facts and reorder the list. That reorder is ranking, not an answer.
+A chunk search finds text that is similar to the question. A fact search finds a statement, then walks from its entities back to chunks. Fusing both lists is why one passage can carry `evidence`: the facts that pulled it up. The chat model can drop weak facts and reorder the list. That reorder is ranking. `retrieve` returns the passages. `query` then asks the chat model for a short answer that uses only those passages.
 
 ## Two stores, one contract
 

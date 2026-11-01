@@ -1,8 +1,8 @@
 # Raganite
 
-These pages show you how to install Raganite, index documents, and retrieve passages for a question.
+These pages show you how to install Raganite, index documents, retrieve passages, and answer a question from those passages.
 
-Raganite builds a knowledge graph from your files, then returns the passages that help answer a question. It does not write the answer. Your own model can do that from the passages it returns.
+Raganite builds a knowledge graph from your files. `retrieve` returns the passages that help answer a question. `query` writes a short answer from those passages.
 
 ## Start here
 
