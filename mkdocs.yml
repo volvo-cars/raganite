@@ -1,5 +1,5 @@
 site_name: Raganite
-site_description: Index documents into a knowledge graph and retrieve the passages that answer a question.
+site_description: Index documents into a knowledge graph, retrieve passages, and answer a question from those passages.
 site_url: https://volvo-cars.github.io/raganite
 repo_url: https://github.com/volvo-cars/raganite
 repo_name: volvo-cars/raganite

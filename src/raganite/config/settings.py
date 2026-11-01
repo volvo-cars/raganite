@@ -39,7 +39,9 @@ class ConfigModel(BaseModel):
 class ModelClientConfig(ConfigModel):
     """Provider selection and native LangChain constructor options for CLI clients."""
 
-    provider: Literal["openai", "azure-openai"] = "openai"
+    provider: Literal["openai", "azure-openai", "huggingface", "huggingface-endpoint", "ollama"] = (
+        "openai"
+    )
     model: str = Field(min_length=1)
     api_version: str | None = None
     options: dict = Field(default_factory=dict)
@@ -95,7 +97,7 @@ class ChunkingConfig(ConfigModel):
 class IndexingConfig(ConfigModel):
     workers: int = Field(default_factory=cpu_workers, ge=1)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
-    schema_mode: Literal["fixed", "free", "extracted"] = "fixed"
+    schema_mode: Literal["fixed", "free", "extracted"] = "free"
     graph_schema: GraphSchema | None = Field(default_factory=default_schema)
     perform_entity_resolution: bool = True
     on_error: Literal["RAISE", "IGNORE"] = "RAISE"

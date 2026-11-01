@@ -16,6 +16,7 @@
 """Filter facts, traverse semantic paths, fuse passages, and rerank with an LLM."""
 
 import asyncio
+import contextvars
 import json
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -29,9 +30,16 @@ from langchain_core.language_models import BaseChatModel
 from raganite.backends.base import GraphBackend
 from raganite.backends.models import FactHit
 from raganite.clients.llm import EmbeddingClient, LLMClient
+from raganite.clients.llm.usage import track_run, usage_stage
 from raganite.config import RetrievalConfig
 
-from .models import FactEvidence, Passage
+from .models import Answer, FactEvidence, Passage, RetrievalResult
+
+ANSWER_PROMPT = (
+    "Answer the question using only the passages. "
+    "If the passages do not contain the answer, say you do not know. "
+    "Return only the short answer."
+)
 
 FILTER_PROMPT = (
     "Rank only the triples that are useful for answering the question. "
@@ -126,10 +134,13 @@ class Retriever:
     def _title(self, source: str) -> str:
         return self._titles.get(source) or self._titles.get(Path(source).name, Path(source).stem)
 
-    def _chat_json(self, system: str, user: str) -> str:
+    def _chat_json(self, system: str, user: str, *, stage: str) -> str:
         if self.llm is None:
             raise ValueError("A ranking LLM is not configured")
-        response = self.llm.invoke([("system", system), ("user", user)], **self.config.llm_options)
+        with usage_stage(stage):
+            response = self.llm.invoke(
+                [("system", system), ("user", user)], **self.config.llm_options
+            )
         return response.text.strip()
 
     def _select_facts(self, query: str, facts: list[FactHit]) -> tuple[list[FactHit], str]:
@@ -141,6 +152,7 @@ class Retriever:
             content = self._chat_json(
                 self._filter_prompt,
                 f"Question: {query}\n\nCandidate triples:\n{candidates}\n\nSelect and rank at most {self.config.filtered_triple_k}.",
+                stage="retrieval.filter",
             )
             indices = parse_ranked_indices(
                 content, max_index=len(facts), limit=self.config.filtered_triple_k
@@ -162,7 +174,9 @@ class Retriever:
         )
         try:
             content = self._chat_json(
-                self._rerank_prompt, f"Question: {query}\n\nPassages:\n{text}"
+                self._rerank_prompt,
+                f"Question: {query}\n\nPassages:\n{text}",
+                stage="retrieval.rerank",
             )
             indices = parse_ranked_indices(
                 content, max_index=len(candidates), limit=len(candidates)
@@ -185,10 +199,12 @@ class Retriever:
         direct = self.backend.direct_passages(embedding, top_k=cfg.top_k)
         passages: dict[str, dict[str, Any]] = {}
 
-        def passage(source: str, text: str) -> dict[str, Any]:
+        def passage(chunk_id: str, source: str, text: str) -> dict[str, Any]:
+            # Chunks of one file share a path. The private chunk id keeps them apart.
             return passages.setdefault(
-                source,
+                chunk_id,
                 {
+                    "chunk_id": chunk_id,
                     "source": source,
                     "title": self._title(source),
                     "text": text,
@@ -201,8 +217,8 @@ class Retriever:
             )
 
         for rank, hit in enumerate(direct, 1):
-            if hit.source:
-                current = passage(hit.source, hit.text)
+            if hit.chunk_id:
+                current = passage(hit.chunk_id, hit.source, hit.text)
                 current["direct_score"] = max(current["direct_score"], hit.score)
                 current["direct_rank"] = min(current["direct_rank"] or rank, rank)
         filter_status = "disabled"
@@ -218,11 +234,11 @@ class Retriever:
             )
         seen = set()
         for row in expanded:
-            if not row.source:
+            if not row.chunk_id:
                 continue
-            current = passage(row.source, row.text)
+            current = passage(row.chunk_id, row.source, row.text)
             key = (
-                row.source,
+                row.chunk_id,
                 row.relationship_id,
                 row.seed_entity,
                 row.related_entity,
@@ -254,14 +270,14 @@ class Retriever:
         scores: dict[str, float] = {}
         for weight, order in ((1.0, direct_order), (cfg.graph_weight, graph_order)):
             for rank, item in enumerate(order, 1):
-                source = item["source"]
-                scores[source] = scores.get(source, 0.0) + weight / (cfg.rrf_k + rank)
+                chunk_id = item["chunk_id"]
+                scores[chunk_id] = scores.get(chunk_id, 0.0) + weight / (cfg.rrf_k + rank)
         for rank, item in enumerate(graph_order, 1):
             item["graph_rank"] = rank
-        for source, item in passages.items():
+        for chunk_id, item in passages.items():
             item.update(
-                score=scores.get(source, 0.0),
-                fusion_score=scores.get(source, 0.0),
+                score=scores.get(chunk_id, 0.0),
+                fusion_score=scores.get(chunk_id, 0.0),
                 triple_filter_status=filter_status,
             )
         fused = sorted(
@@ -301,22 +317,74 @@ class Retriever:
         }
         return Passage(row["source"], row["title"], row["text"], row["score"], evidence, metadata)
 
-    def retrieve(self, query: str, *, top_k: int | None = None) -> list[Passage]:
+    def _answer_messages(self, question: str, passages: Sequence[Passage]) -> list[tuple[str, str]]:
+        context = "\n\n".join(
+            f"[{index}] {passage.title}\n{passage.text}"
+            for index, passage in enumerate(passages, 1)
+        )
+        return [
+            ("system", ANSWER_PROMPT),
+            ("user", f"Passages:\n{context}\n\nQuestion: {question}"),
+        ]
+
+    def _answer_options(self) -> dict[str, Any]:
+        # Ranking calls request JSON. An answer is plain text, so that format stays off.
+        options = dict(self.config.llm_options)
+        options.pop("response_format", None)
+        return options
+
+    def query(self, question: str, *, top_k: int | None = None) -> Answer:
+        """Retrieve passages for a question, then answer from those passages."""
+        if self.llm is None:
+            raise ValueError("An LLM is required to answer a question")
+        with track_run("query") as usage:
+            passages = self.retrieve(question, top_k=top_k)
+            with usage_stage("query.answer"):
+                response = self.llm.invoke(
+                    self._answer_messages(question, passages), **self._answer_options()
+                )
+            return Answer(question, response.text.strip(), tuple(passages), usage)
+
+    async def aquery(self, question: str, *, top_k: int | None = None) -> Answer:
+        """Retrieve passages without blocking, then answer from those passages."""
+        if self.llm is None:
+            raise ValueError("An LLM is required to answer a question")
+        with track_run("query") as usage:
+            passages = await self.aretrieve(question, top_k=top_k)
+            with usage_stage("query.answer"):
+                response = await self.llm.ainvoke(
+                    self._answer_messages(question, passages), **self._answer_options()
+                )
+            return Answer(question, response.text.strip(), tuple(passages), usage)
+
+    def retrieve(self, query: str, *, top_k: int | None = None) -> RetrievalResult:
         if top_k is not None and top_k < 1:
             raise ValueError("top_k must be positive")
-        with self._slots:
-            rows = self._retrieve(query)
-            return [self._passage(row) for row in rows[:top_k]]
+        with track_run("retrieval") as usage:
+            with self._slots:
+                rows = self._retrieve(query)
+                return RetrievalResult(
+                    [self._passage(row) for row in rows[:top_k]],
+                    usage,
+                )
 
     def retrieve_many(
         self, queries: Sequence[str], *, top_k: int | None = None
-    ) -> list[list[Passage]]:
-        return list(self._pool.map(lambda query: self.retrieve(query, top_k=top_k), queries))
+    ) -> list[RetrievalResult]:
+        # Each worker needs its own copy. One context cannot run on two threads.
+        jobs = [(query, contextvars.copy_context()) for query in queries]
 
-    async def aretrieve(self, query: str, *, top_k: int | None = None) -> list[Passage]:
+        def retrieve_one(job: tuple[str, contextvars.Context]) -> RetrievalResult:
+            query, context = job
+            return context.run(self.retrieve, query, top_k=top_k)
+
+        return list(self._pool.map(retrieve_one, jobs))
+
+    async def aretrieve(self, query: str, *, top_k: int | None = None) -> RetrievalResult:
+        context = contextvars.copy_context()
         return await asyncio.get_running_loop().run_in_executor(
             self._pool,
-            lambda: self.retrieve(query, top_k=top_k),
+            lambda: context.run(self.retrieve, query, top_k=top_k),
         )
 
     def close(self) -> None:

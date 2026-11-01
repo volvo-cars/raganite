@@ -18,6 +18,10 @@ Unchanged text is skipped. Pass `--force` to store it again.
 printf 'Paris is the capital of France.\n' | uv run raganite index - --source notes --document-path paris.txt
 ```
 
+The command prints a JSON report. `usage` has the run's token and timing totals. A failed file is reported as `indexing_failed` unless you pass `-vv`, which includes the error text. See the [command line reference](../reference/cli.md).
+
+A directory index keeps a file when its name matches `IndexingConfig.include_globs`, it is no larger than `max_file_bytes` (default 1,000,000), and its path does not match `exclude_globs`. The default include patterns are `*.py`, `*.md`, `*.rst`, `*.txt`, `*.json`, `*.yaml`, `*.yml`, `*.toml`, `*.ini`, and `*.cfg`. The default exclude patterns are `*/.git/*`, `*/.venv/*`, `*/venv/*`, `*/node_modules/*`, `*/__pycache__/*`, `*/.mypy_cache/*`, `*/.pytest_cache/*`, `*/dist/*`, `*/build/*`, and `*.lock`. A single file or stdin is not filtered by these globs.
+
 ## Index from Python
 
 ```python
@@ -37,15 +41,21 @@ with KnowledgeGraph(embeddings=embeddings, llm=chat) as graph:
     print(report.indexed_files, report.skipped_files, report.failed_files)
 ```
 
-`index_text` is the same path for one string. `index_repository` walks a directory using the include and exclude globs on `IndexingConfig`.
+`index_text` is the same path for one string. `index_repository` walks a directory using `include_globs`, `exclude_globs`, and `max_file_bytes` on `IndexingConfig`.
 
 Accessing `.indexer` without a chat model raises `ValueError`.
 
 ## What gets stored
 
-Each document becomes chunks. The chat model names entities and the relations between them. By default those relations are also stored as facts (`indexing.index_facts` is `true`). Shared entities stay in the namespace until the last document that mentioned them is removed.
+Each document becomes chunks. The chat model names entities and the relations between them. That extraction is unconstrained (`schema_mode` is `free`). `fixed` limits it to the built-in code schema, or to a schema you supply. `extracted` infers a schema from the document first. By default those relations are also stored as facts (`indexing.index_facts` is `true`). Shared entities stay in the namespace until the last document that mentioned them is removed.
 
 Chunk size defaults to 1500 characters with 200 characters of overlap. Overlap must be smaller than the chunk size.
+
+## Ordered documents
+
+Pass integer `order` and a non-empty string `time` on a LangChain document's metadata to link that document into a session sequence. Indexing adds a `Session` entity named `session {order}`. A `FROM_CHUNK` edge runs from the session to each of its chunks. An `IN_SESSION` edge runs from each other entity to the session. Sessions in the same source are linked in increasing `order` by `NEXT` edges. Each `NEXT` edge records the earlier time as `previous` and the later time as `next`. A document that lacks either field is stored without a session.
+
+The CLI path for a directory, a file, or stdin does not set `order` or `time`. Use `index_documents` when you have that metadata.
 
 ## Replace one source or the whole namespace
 

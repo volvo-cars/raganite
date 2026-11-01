@@ -25,11 +25,13 @@ uv uses `uv.lock` when it is compatible with the project settings and configured
 uv run raganite --help
 ```
 
-You should see the commands `init`, `config`, `index`, `retrieve`, and `clear`.
+You should see the commands `init`, `config`, `index`, `retrieve`, `query`, and `clear`.
 
 ## What you have
 
 The install includes the library, the `raganite` command, SQLite storage, and the Neo4j client libraries. SQLite needs no extra server. Neo4j is optional and is covered in [Neo4j](../guides/neo4j.md).
+
+Hugging Face chat and embeddings are optional. `uv sync --extra huggingface` adds them. Ollama chat is optional too: `uv sync --extra ollama`. [Model providers](../guides/providers.md) shows both.
 
 Model calls need an OpenAI or Azure OpenAI key. The next lesson sets that up. `init`, `config`, and `clear` do not call a model.
 

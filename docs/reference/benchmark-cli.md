@@ -38,6 +38,7 @@ Download HotpotQA, index it, and answer the first questions. Repeating a command
 | `--qa-top-k` | `5` | Passages sent to the answer model |
 | `--output` | `benchmark/results/hotpotqa.jsonl` | JSONL path |
 | `--retrieval-only` | off | Score passages and skip answer generation |
+| `--baseline PATH` | unset | Baseline JSONL for `--compare-only`. If omitted, the command uses `$HOTPOTQA_REFERENCE_ROOT/results/$HOTPOTQA_BASELINE.jsonl`. `HOTPOTQA_BASELINE` defaults to `avesta_triple_kg_hotpotqa_1000`. `--compare-only` requires this flag or `HOTPOTQA_REFERENCE_ROOT` |
 | `--compare-only` | off | Rebuild the saved read-only comparison. Does not index or call a model |
 
 Native layout also reads `AVESTA_VECTOR_INDEX`, `AVESTA_FULLTEXT_INDEX`, and `AVESTA_FACT_VECTOR_INDEX`.

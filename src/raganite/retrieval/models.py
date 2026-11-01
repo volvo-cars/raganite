@@ -15,8 +15,11 @@
 
 """Public passage results and their supporting graph evidence."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+from raganite.clients.llm.usage import UsageReport
 
 
 @dataclass(frozen=True)
@@ -38,3 +41,27 @@ class Passage:
     score: float
     evidence: tuple[FactEvidence, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Answer:
+    """A question answered from the passages retrieved for it."""
+
+    question: str
+    answer: str
+    passages: tuple[Passage, ...]
+    usage: UsageReport
+
+
+class RetrievalResult(list[Passage]):
+    """Passages from one retrieval, with that run's timing and token totals.
+
+    The result is still a list, so existing callers can index and iterate it.
+    ``usage`` stays the retrieval run even when a benchmark run is wrapped around it.
+    """
+
+    usage: UsageReport
+
+    def __init__(self, passages: Sequence[Passage], usage: UsageReport) -> None:
+        super().__init__(passages)
+        self.usage = usage

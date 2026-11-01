@@ -7,6 +7,7 @@ import os
 import re
 import time
 from collections import Counter
+from dataclasses import asdict
 from pathlib import Path
 
 from benchmark.fetch import LOCOMO_URL, ensure_download
@@ -128,39 +129,45 @@ async def _answer_one(
     done: set[str],
     llm_judge: bool,
 ):
+    from raganite.clients.llm.usage import track_run, usage_stage
+
     question_id = f"{sample_id}:{index}"
     try:
-        passages = [
-            {"source": item.source, "title": item.title, "text": item.text, "score": item.score}
-            for item in await retriever.aretrieve(question["question"])
-        ]
-        gold = str(question.get("answer") or "")
-        category = int(question["category"])
-        context = "\n\n".join(item["text"] for item in passages[:5])
-        response = await answer_model.ainvoke([("user", paper_prompt(context, question))])
-        prediction = response.text.strip()
-        evidence = [str(item) for item in question.get("evidence") or []]
-        row = {
-            "id": question_id,
-            "sample_id": sample_id,
-            "question": question["question"],
-            "category": category,
-            "category_name": CATEGORY_NAMES.get(category, str(category)),
-            "gold": gold,
-            "prediction": prediction,
-            "qa_f1": _qa_f1(prediction, gold, category),
-            "exact_match": float(_tokens(prediction) == _tokens(gold)),
-            "evidence_recall_at_5": _evidence_recall(passages, evidence, 5),
-            "evidence_recall_at_10": _evidence_recall(passages, evidence, 10),
-        }
-        if llm_judge:
-            judge_gold = "Not mentioned in the conversation" if category == 5 else gold
-            if category == 3:
-                judge_gold = judge_gold.split(";", 1)[0].strip()
-            verdict = await answer_model.ainvoke(
-                [("user", judge_prompt(str(question["question"]), judge_gold, prediction))],
-            )
-            row["llm_judge"] = judge_label(verdict.text)
+        with track_run("benchmark") as usage:
+            passages = [
+                {"source": item.source, "title": item.title, "text": item.text, "score": item.score}
+                for item in await retriever.aretrieve(question["question"])
+            ]
+            gold = str(question.get("answer") or "")
+            category = int(question["category"])
+            context = "\n\n".join(item["text"] for item in passages[:5])
+            with usage_stage("benchmark.answer"):
+                response = await answer_model.ainvoke([("user", paper_prompt(context, question))])
+            prediction = response.text.strip()
+            evidence = [str(item) for item in question.get("evidence") or []]
+            row = {
+                "id": question_id,
+                "sample_id": sample_id,
+                "question": question["question"],
+                "category": category,
+                "category_name": CATEGORY_NAMES.get(category, str(category)),
+                "gold": gold,
+                "prediction": prediction,
+                "qa_f1": _qa_f1(prediction, gold, category),
+                "exact_match": float(_tokens(prediction) == _tokens(gold)),
+                "evidence_recall_at_5": _evidence_recall(passages, evidence, 5),
+                "evidence_recall_at_10": _evidence_recall(passages, evidence, 10),
+            }
+            if llm_judge:
+                judge_gold = "Not mentioned in the conversation" if category == 5 else gold
+                if category == 3:
+                    judge_gold = judge_gold.split(";", 1)[0].strip()
+                with usage_stage("benchmark.judge"):
+                    verdict = await answer_model.ainvoke(
+                        [("user", judge_prompt(str(question["question"]), judge_gold, prediction))],
+                    )
+                row["llm_judge"] = judge_label(verdict.text)
+        row["usage"] = asdict(usage)
         async with lock:
             if question_id in done:
                 return
@@ -265,7 +272,8 @@ def _run_locomo_conversations(options, chosen, dimensions) -> None:
             if report is not None:
                 print(
                     f"Indexed {namespace}: {len(report.indexed_files)} sessions, "
-                    f"{len(report.skipped_files)} unchanged",
+                    f"{len(report.skipped_files)} unchanged, "
+                    f"{report.usage.total_tokens} tokens in {report.usage.elapsed_seconds:.1f}s",
                     flush=True,
                 )
                 if report.failed_files:

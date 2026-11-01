@@ -53,13 +53,19 @@ def _average(rows: list[dict], field: str) -> dict[str, float]:
 
 
 def aggregate(rows: list[dict]) -> dict:
+    from raganite.clients.llm.usage import combine_usage
+
     answered = [row for row in rows if "answer" in row]
-    return {
+    summary = {
         "questions": len(rows),
         "answered_questions": len(answered),
         "qa": _average(answered, "answer_metrics"),
         "retrieval": _average(rows, "retrieval_metrics"),
     }
+    usage = [row["usage"] for row in rows if isinstance(row.get("usage"), dict)]
+    if usage:
+        summary["usage"] = combine_usage(usage)
+    return summary
 
 
 def _by_id(rows: list[dict]) -> dict[str, dict]:

@@ -48,6 +48,7 @@ from raganite.backends.base import (
     identity,
 )
 from raganite.clients.llm import EmbeddingClient, LLMClient
+from raganite.clients.llm.usage import UsageReport, track_run, usage_stage
 from raganite.config import RaganiteConfig
 from raganite.schema.topology import GraphTopology
 
@@ -267,6 +268,7 @@ class IndexingReport:
     skipped_files: list[tuple[str, str]] = field(default_factory=list)
     failed_files: list[tuple[str, str]] = field(default_factory=list)
     deleted_files: int = 0
+    usage: UsageReport = field(default_factory=UsageReport)
 
     @property
     def total(self) -> int:
@@ -344,7 +346,7 @@ class KnowledgeGraphIndexer:
                 if isinstance(v, (str, int, float, bool))
                 and k not in {"text", "index", "embedding"}
             }
-            chunk.metadata.update({"source": source, "path": path})
+            chunk.metadata.update({"source": source, "path": path, "_chunk_id": chunk.uid})
         return chunks
 
     async def _build_graph(
@@ -366,7 +368,8 @@ class KnowledgeGraphIndexer:
         adapter = _ExtractionLLM(self.llm, semaphore)
         schema = cfg.graph_schema if cfg.schema_mode == "fixed" else None
         if cfg.schema_mode == "extracted":
-            schema = await SchemaFromTextExtractor(llm=adapter).run(text=document.page_content)
+            with usage_stage("indexing.extract"):
+                schema = await SchemaFromTextExtractor(llm=adapter).run(text=document.page_content)
         options: dict[str, Any] = {}
         if cfg.extraction_prompt is not None:
             options["prompt_template"] = cfg.extraction_prompt
@@ -377,12 +380,13 @@ class KnowledgeGraphIndexer:
             **options,
         )
         document_id = identity("document", self.backend.namespace, source, path)
-        extracted = await extractor.run(
-            chunks=chunks,
-            document_info=DocumentInfo(path=path, uid=document_id),
-            schema=schema,
-            examples=cfg.examples,
-        )
+        with usage_stage("indexing.extract"):
+            extracted = await extractor.run(
+                chunks=chunks,
+                document_info=DocumentInfo(path=path, uid=document_id),
+                schema=schema,
+                examples=cfg.examples,
+            )
         mapped = {}
         nodes: dict[str, GraphNode] = {}
         for node in extracted.nodes:
@@ -402,6 +406,8 @@ class KnowledgeGraphIndexer:
             properties: dict[str, Any] = dict(node.properties)
             if kind in {"document", "chunk"}:
                 properties.update({"source": source, "path": path})
+            if kind == "chunk":
+                properties["_chunk_id"] = node_id
             if kind == "document":
                 properties.update({"metadata": document.metadata, "content_hash": content_hash})
             nodes[node_id] = GraphNode(
@@ -509,6 +515,19 @@ class KnowledgeGraphIndexer:
         ]
         if len(set(paths)) != len(paths):
             raise ValueError("Document paths must be unique within one source/batch")
+        with track_run("indexing") as usage:
+            report = await self._index_batch(documents, paths, source, force, calls)
+            report.usage = usage
+            return report
+
+    async def _index_batch(
+        self,
+        documents: Sequence[Document],
+        paths: list[str],
+        source: str,
+        force: bool,
+        calls: asyncio.Semaphore,
+    ) -> IndexingReport:
         report = IndexingReport()
 
         async def index_one(document: Document, path: str):
@@ -526,13 +545,14 @@ class KnowledgeGraphIndexer:
                 logger.debug("Indexing %s failed: %s", path, exc, exc_info=True)
                 return "failed", path, str(exc)
 
-        for offset in range(0, len(documents), cfg.workers):
+        workers = self.config.indexing.workers
+        for offset in range(0, len(documents), workers):
             results = await asyncio.gather(
                 *(
                     index_one(doc, path)
                     for doc, path in zip(
-                        documents[offset : offset + cfg.workers],
-                        paths[offset : offset + cfg.workers],
+                        documents[offset : offset + workers],
+                        paths[offset : offset + workers],
                         strict=True,
                     )
                 )
@@ -598,6 +618,14 @@ class KnowledgeGraphIndexer:
             raise NotADirectoryError(root)
         source = source_name or root.name
         paths = await asyncio.to_thread(lambda: list(self.iter_files(root)))
+        with track_run("indexing") as usage:
+            report = await self._index_repository(root, paths, source, force)
+            report.usage = usage
+            return report
+
+    async def _index_repository(
+        self, root: Path, paths: list[Path], source: str, force: bool
+    ) -> IndexingReport:
         report = IndexingReport()
         workers = self.config.indexing.workers
         for offset in range(0, len(paths), workers):

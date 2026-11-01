@@ -47,5 +47,27 @@ Prepared for the initial **0.1.0** release.
 - A HotpotQA evaluation harness for an existing knowledge base, with resumable
   successful results, recorded failures, retrieval and answer metrics, and
   matched-question baseline comparisons.
+- Grounded queries through `KnowledgeGraph.query`, `Retriever.query`,
+  `Retriever.aquery`, and the `raganite query` command. The answer is generated
+  only from the retrieved passages and is returned with those passages.
+- Token and timing usage on indexing reports, retrieval results, and query
+  answers, including stage totals. `raganite query --format json` includes that
+  usage, and HotpotQA and LoCoMo runs record it on each question.
+- Optional Hugging Face chat and embedding clients, including hosted endpoints,
+  and an Ollama chat client. Install them with `uv sync --extra huggingface` or
+  `uv sync --extra ollama`.
+
+### Changed
+
+- Indexing defaults to free extraction, so the model names entities and relations
+  from the text. Pass `--schema`, or set `schema_mode` to `fixed`, to keep the
+  built-in code schema. The previous default was `fixed`.
+- `load_config()` and the CLI load `.env` from the working directory when that
+  file is present, and they use `raganite.json` or `raganite.toml` there when no
+  config path is given. An explicit dotenv path must exist. `--no-env-file` has
+  been removed.
+- Azure OpenAI v1 clients accept `AZURE_OPENAI_ENDPOINT` and
+  `AZURE_OPENAI_API_KEY`, and also `OPENAI_API_KEY`, `OPENAI_API_BASE`, and
+  `OPENAI_BASE_URL`, so those values do not have to be copied between names.
 
 

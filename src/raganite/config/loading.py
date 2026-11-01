@@ -51,9 +51,16 @@ def load_config(
 
     Existing process variables take precedence over dotenv values. Environment
     settings then override the config file, and explicit CLI overrides win last.
-    Calling this function with env_file=None does not load a dotenv file.
+    When env_file is omitted, load .env from the current directory if present.
+    An explicitly requested dotenv file must exist.
     """
-    if env_file is not None:
+    if path is None:
+        path = _config_file_in_cwd()
+    if env_file is None:
+        default_env = Path.cwd() / ".env"
+        if default_env.is_file():
+            load_dotenv(default_env, override=False)
+    else:
         if not env_file.is_file():
             raise FileNotFoundError(env_file)
         load_dotenv(env_file, override=False)
@@ -70,3 +77,12 @@ def load_config(
             raise ValueError("Config must contain an object of Raganite settings")
     data = _merge(data, EnvSettingsSource(RaganiteConfig)())
     return RaganiteConfig(**_merge(data, overrides or {}))
+
+
+def _config_file_in_cwd():
+    """Return a config file in the current working directory, if any."""
+    for name in ("raganite.json", "raganite.toml"):
+        path = Path.cwd() / name
+        if path.is_file():
+            return path
+    return None

@@ -15,7 +15,7 @@
 
 """Fact-based graph retrieval with configurable LLM filtering and reranking."""
 
-from .models import FactEvidence, Passage
+from .models import Answer, FactEvidence, Passage, RetrievalResult
 from .retriever import Retriever
 
-__all__ = ["FactEvidence", "Passage", "Retriever"]
+__all__ = ["Answer", "FactEvidence", "Passage", "RetrievalResult", "Retriever"]
