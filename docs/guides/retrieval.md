@@ -28,17 +28,6 @@ for passage in answer.passages:
 
 The answer uses only those passages. `answer.usage` records retrieval and `query.answer` token totals. `await graph.retriever.aquery(question)` is the async form. A retriever without a chat model raises `ValueError`.
 
-`query` does that retrieval and then asks the chat model to answer from the returned passages:
-
-```python
-answer = graph.query("What is the capital of France?", top_k=5)
-print(answer.answer)
-for passage in answer.passages:
-    print(passage.title, passage.text)
-```
-
-The answer uses only those passages. `answer.usage` records retrieval and `query.answer` token totals. `await graph.retriever.aquery(question)` is the async form. A retriever without a chat model raises `ValueError`.
-
 A blank question raises `ValueError`. `top_k` below 1 raises `ValueError`.
 
 ## Several questions
