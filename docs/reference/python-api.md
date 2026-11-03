@@ -112,9 +112,9 @@ Fields: `backend`, `namespace`, `embedding_dimensions`, `chat`, `embeddings`, `i
 
 `from_file(path)` loads JSON or TOML. Environment variables use the prefix `RAGANITE_` and `__` for nesting. Extra fields are rejected.
 
-`RetrievalConfig` defaults: `top_k=200`, `use_triples=True`, `filter_triples=True`, `rerank_passages=True`, `expansion_depth=2`. `filtered_triple_k` cannot exceed `triple_top_k`.
+`RetrievalConfig` defaults: `top_k=200`, `use_triples=True`, `use_fulltext=True`, `fulltext_weight=1.0`, `filter_triples=False`, `rerank_passages=False`, `expansion_depth=2`. `filtered_triple_k` cannot exceed `triple_top_k`. Full-text hits are fused with chunk vectors and fact expansion, and a passage keeps the facts that led to it. Set the two chat flags true to filter facts and rerank passages. The command line names that step when it runs.
 
-`IndexingConfig.index_facts` defaults to `True`. `IndexingConfig.schema_mode` defaults to `free`, so extraction is not limited to `default_schema`. `fixed` uses that code schema, or `graph_schema` when one is set. `ChunkingConfig` defaults to 1500 characters and 200 overlap. `include_globs`, `exclude_globs`, and `max_file_bytes` (default 1,000,000) select files for `index_repository`. The patterns are listed in [Indexing](../guides/indexing.md).
+`IndexingConfig.index_facts` defaults to `True`. `IndexingConfig.schema_mode` defaults to `free`, and `graph_schema` defaults to `None`, so free mode does not build the code schema. `fixed` uses `graph_schema` when one is set, and otherwise `default_schema()`. Entity resolution merges an exact label and name. A different character stays a separate entity. `ChunkingConfig` defaults to 1500 characters and 200 overlap. `include_globs`, `exclude_globs`, and `max_file_bytes` (default 1,000,000) select files for `index_repository`. The patterns are listed in [Indexing](../guides/indexing.md).
 
 `Neo4jConfig.layout` is `owned` or `native`. `SQLiteConfig.path` defaults to `.raganite/graph.sqlite3`.
 
@@ -139,6 +139,7 @@ The store contract. Callers normally use `KnowledgeGraph` and do not call these 
 | `search_fulltext(query, *, top_k=5, source=None)` | Full-text search used by retrieval |
 | `prepare()` | Check fact storage and cache traversal topology. Does not write |
 | `direct_passages(embedding, *, top_k)` | Ranked chunk passages for an embedding |
+| `lexical_passages(query, *, top_k)` | The same passage records, ranked by full text |
 | `search_facts(embedding, *, top_k=30)` | Ranked facts with both endpoints and semantic degrees |
 | `expand_facts(facts, *, depth=2, limit=5000, degree_penalty_weight=0.25)` | Rank entity paths from those facts back to chunks |
 | `close()` | Release connections the backend owns |
@@ -151,7 +152,7 @@ The store contract. Callers normally use `KnowledgeGraph` and do not call these 
 
 ## `raganite.schema`
 
-`GraphSchema` and `default_schema` describe what extraction may emit. `GraphTopology` names the structural edge types. The owned default is `FROM_CHUNK`, `FROM_DOCUMENT`, `HAS_DOCUMENT`, `BELONGS_TO`, `FACT_SUBJECT`, `FACT_OBJECT`, `IN_SESSION`, and `NEXT`. `IN_SESSION` and `NEXT` are written for documents that carry integer `order` and string `time` metadata. See [Indexing](../guides/indexing.md).
+`GraphSchema` and `default_schema` describe what extraction may emit. `GraphTopology` names the structural edge types. The owned default is `FROM_CHUNK`, `FROM_DOCUMENT`, `HAS_DOCUMENT`, `BELONGS_TO`, `FACT_SUBJECT`, `FACT_OBJECT`, `IN_SESSION`, and `NEXT`. `IN_SESSION` and `NEXT` are written for documents that carry integer `order` and string `time` metadata, and those edges are embedded as facts. See [Indexing](../guides/indexing.md).
 
 ## `raganite.clients.llm`
 

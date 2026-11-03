@@ -268,6 +268,33 @@ class _SQLiteStorage(GraphBackend):
                 )
             self._refresh_degrees()
 
+    def store_shared_nodes(
+        self, nodes: Sequence[tuple[GraphNode, Sequence[tuple[str, str]]]]
+    ) -> None:
+        """Write nodes owned by every listed document. Each owner is a source and path."""
+        self.require_writable()
+        if not nodes:
+            return
+        with self._lock, self._connection:
+            for node, owners in nodes:
+                self._connection.execute(
+                    "INSERT INTO nodes VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(namespace, id) "
+                    "DO UPDATE SET label=excluded.label, kind=excluded.kind, "
+                    "properties=excluded.properties, embedding=excluded.embedding",
+                    (
+                        self.namespace,
+                        node.id,
+                        node.label,
+                        node.kind,
+                        json.dumps(node.properties),
+                        json.dumps(node.embedding) if node.embedding is not None else None,
+                    ),
+                )
+                self._connection.executemany(
+                    "INSERT OR IGNORE INTO document_nodes VALUES (?, ?, ?, ?)",
+                    [(self.namespace, source, path, node.id) for source, path in owners],
+                )
+
     def _refresh_degrees(self) -> None:
         """Store each entity's neighbor count so retrieval does not scan edges per step."""
         self._connection.execute(

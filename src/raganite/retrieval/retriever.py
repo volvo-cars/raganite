@@ -210,8 +210,10 @@ class Retriever:
                     "text": text,
                     "direct_score": 0.0,
                     "graph_score": 0.0,
+                    "lexical_score": 0.0,
                     "direct_rank": None,
                     "graph_rank": None,
+                    "lexical_rank": None,
                     "graph_evidence": [],
                 },
             )
@@ -221,6 +223,13 @@ class Retriever:
                 current = passage(hit.chunk_id, hit.source, hit.text)
                 current["direct_score"] = max(current["direct_score"], hit.score)
                 current["direct_rank"] = min(current["direct_rank"] or rank, rank)
+        if cfg.use_fulltext:
+            for rank, hit in enumerate(self.backend.lexical_passages(query, top_k=cfg.top_k), 1):
+                if not hit.chunk_id:
+                    continue
+                current = passage(hit.chunk_id, hit.source, hit.text)
+                current["lexical_score"] = max(current["lexical_score"], hit.score)
+                current["lexical_rank"] = min(current["lexical_rank"] or rank, rank)
         filter_status = "disabled"
         expanded = []
         if cfg.use_triples:
@@ -267,8 +276,16 @@ class Retriever:
             (p for p in passages.values() if p["graph_score"] > 0),
             key=lambda p: (-p["graph_score"], p["source"]),
         )
+        lexical_order = sorted(
+            (p for p in passages.values() if p["lexical_rank"] is not None),
+            key=lambda p: (p["lexical_rank"], p["source"]),
+        )
         scores: dict[str, float] = {}
-        for weight, order in ((1.0, direct_order), (cfg.graph_weight, graph_order)):
+        for weight, order in (
+            (1.0, direct_order),
+            (cfg.graph_weight, graph_order),
+            (cfg.fulltext_weight, lexical_order),
+        ):
             for rank, item in enumerate(order, 1):
                 chunk_id = item["chunk_id"]
                 scores[chunk_id] = scores.get(chunk_id, 0.0) + weight / (cfg.rrf_k + rank)
@@ -286,6 +303,7 @@ class Retriever:
                 -p["fusion_score"],
                 p["direct_rank"] or cfg.top_k + 1,
                 p["graph_rank"] or cfg.expansion_limit + 1,
+                p["lexical_rank"] or cfg.top_k + 1,
                 p["title"],
             ),
         )[: cfg.top_k]

@@ -54,6 +54,35 @@ def _graph(monkeypatch):
     return backend, indexer
 
 
+def test_session_links_are_searchable_facts(monkeypatch):
+    from langchain_core.documents import Document
+
+    backend, indexer = _graph(monkeypatch)
+    sessions = [
+        Document(
+            page_content="Ada left on Monday.",
+            metadata={"path": "session-1.txt", "order": 1, "time": "1:56 pm on 8 May, 2023"},
+        ),
+        Document(
+            page_content="The group met.",
+            metadata={"path": "session-2.txt", "order": 2, "time": "7:55 pm on 9 June, 2023"},
+        ),
+    ]
+    try:
+        indexer.index_documents(sessions, source="conv-26")
+        texts = [node.properties["text"] for node in backend.nodes(kind="fact")]
+        assert "Ada | in session | session 1" in texts
+        next_fact = (
+            "session 1 | next | session 2 | "
+            '{"next": "7:55 pm on 9 June, 2023", "previous": "1:56 pm on 8 May, 2023"}'
+        )
+        assert next_fact in texts
+        found = backend.search_facts([1.0, 0.0], top_k=20)
+        assert any(hit.text == next_fact for hit in found)
+    finally:
+        backend.close()
+
+
 def test_ordered_sessions_stay_linked_for_the_walk(monkeypatch):
     from langchain_core.documents import Document
 

@@ -15,9 +15,9 @@ for passage in passages:
 
 Each `Passage` has `source`, `title`, `text`, `score`, `evidence`, and `metadata`. `evidence` is empty when the passage came only from a direct chunk match. `passages.usage` records elapsed time and token totals for that retrieval run.
 
-`retrieve` embeds the question, finds matching chunks, and, by default, searches facts, expands them through the graph, fuses those hits, and asks the chat model to rerank. It does not generate an answer.
+`retrieve` embeds the question once. By default it searches facts, expands them, searches the full-text index, and fuses those three lists. A passage keeps the facts that led to it on `evidence`. It does not call the chat model. Set `filter_triples` and `rerank_passages` to ask the chat model to drop weak facts and reorder passages. Set `use_fulltext` to false to skip the full-text list. The configured candidate width is applied before `top_k`. `top_k` only shortens the list returned after that work. `retrieve` does not generate an answer. The text command prints `fact filter` or `passage rerank` when that step runs.
 
-`query` does that retrieval and then asks the chat model to answer from the returned passages:
+`query` does that retrieval and then calls the chat model once to answer from the returned passages. With both ranking flags left off, that is the only chat call:
 
 ```python
 answer = graph.query("What is the capital of France?", top_k=5)
@@ -57,7 +57,7 @@ config = RaganiteConfig(
 )
 ```
 
-`use_triples=False` skips fact search and expansion. The other two flags skip the chat-model steps. With both chat steps off, you can construct retrieval without a chat model.
+`use_triples=False` skips fact search and expansion. `use_fulltext=False` skips the full-text list. The other two flags skip the chat-model steps. With both chat steps off, you can construct retrieval without a chat model.
 
 ## Titles
 

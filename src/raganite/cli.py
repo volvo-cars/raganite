@@ -17,6 +17,7 @@
 
 import json
 import logging
+import re
 import sys
 from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
@@ -206,7 +207,39 @@ def _redact(value: Any) -> Any:
     return value
 
 
+_SECRET = re.compile(
+    r"(?i)(?:api[_-]?key|authorization|bearer|token)\s*[:=]\s*\S+|sk-[A-Za-z0-9_\-]{8,}"
+)
+
+
+def public_error(reason: str) -> str:
+    """First line of a failure, with credentials removed and the line shortened."""
+    line = _SECRET.sub("********", reason.splitlines()[0].strip()) if reason.strip() else ""
+    if len(line) > 180:
+        line = line[:177] + "..."
+    return line or "indexing_failed"
+
+
+def _ranking_note(passages: list[dict[str, Any]]) -> str | None:
+    """Name a fact filter or passage rerank when that step ran."""
+    if not passages:
+        return None
+    metadata = passages[0].get("metadata") or {}
+    parts = []
+    fact_filter = metadata.get("triple_filter_status")
+    rerank = metadata.get("passage_rerank_status")
+    if fact_filter and fact_filter != "disabled":
+        parts.append(f"fact filter: {fact_filter}")
+    if rerank and rerank != "disabled":
+        parts.append(f"passage rerank: {rerank}")
+    return "; ".join(parts) or None
+
+
 def _print_passages(passages: list[dict[str, Any]]) -> None:
+    note = _ranking_note(passages)
+    if note:
+        print(note)
+        print()
     for rank, passage in enumerate(passages, 1):
         print(f"[{rank}] {passage['title']} ({passage['source']}) score={passage['score']:.6f}")
         print(passage["text"])
@@ -288,7 +321,7 @@ def _execute(args: SimpleNamespace, config: Any) -> int:
         ]
     else:
         payload["failed_files"] = [
-            {"path": path, "error": "indexing_failed"} for path, _ in report.failed_files
+            {"path": path, "error": public_error(reason)} for path, reason in report.failed_files
         ]
     payload["total"] = report.total
     _emit(payload, output_format)

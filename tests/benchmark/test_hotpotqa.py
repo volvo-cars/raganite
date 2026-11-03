@@ -14,6 +14,35 @@ from raganite.config import Neo4jConfig, RetrievalConfig
 from raganite.retrieval import Retriever
 
 
+def test_usage_report_sums_indexing_and_questions():
+    from benchmark.metrics import benchmark_usage_report
+
+    stage = {
+        "elapsed_seconds": 1.0,
+        "model_seconds": 0.0,
+        "calls": 1,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "input_token_details": {},
+        "output_token_details": {},
+    }
+    indexing = {
+        "name": "indexing",
+        "elapsed_seconds": 2.0,
+        "stages": {"indexing.extract": {**stage, "input_tokens": 10, "output_tokens": 4, "total_tokens": 14}},
+    }
+    questions = {
+        "name": "benchmark",
+        "elapsed_seconds": 1.0,
+        "stages": {"benchmark.answer": {**stage, "input_tokens": 3, "output_tokens": 1, "total_tokens": 4}},
+    }
+    report = benchmark_usage_report(indexing, questions)
+    assert report["total"]["total_tokens"] == 18
+    assert report["indexing"]["stages"]["indexing.extract"]["total_tokens"] == 14
+    assert report["questions"]["stages"]["benchmark.answer"]["total_tokens"] == 4
+
+
 @pytest.mark.parametrize(
     "text, expected",
     [
@@ -127,6 +156,7 @@ def test_direct_retrieval_does_not_query_graph_edges():
     backend, embeddings = Mock(spec=GraphBackend), Mock(spec=Embeddings)
     embeddings.embed_query.return_value = [1.0, 0.0]
     backend.direct_passages.return_value = [PassageHit("c", "doc.txt", "Evidence", 1)]
+    backend.lexical_passages.return_value = []
     retriever = Retriever(
         backend,
         embeddings,

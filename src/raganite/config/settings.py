@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
 
-from raganite.schema import GraphSchema, default_schema
+from raganite.schema import GraphSchema
 
 
 def cpu_workers() -> int:
@@ -98,7 +98,7 @@ class IndexingConfig(ConfigModel):
     workers: int = Field(default_factory=cpu_workers, ge=1)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     schema_mode: Literal["fixed", "free", "extracted"] = "free"
-    graph_schema: GraphSchema | None = Field(default_factory=default_schema)
+    graph_schema: GraphSchema | None = None
     perform_entity_resolution: bool = True
     on_error: Literal["RAISE", "IGNORE"] = "RAISE"
     extraction_prompt: str | None = None
@@ -142,11 +142,13 @@ class RetrievalConfig(ConfigModel):
     expansion_limit: int = Field(default=5000, ge=1)
     degree_penalty_weight: float = Field(default=0.25, ge=0, allow_inf_nan=False)
     graph_weight: float = Field(default=1.0, ge=0, allow_inf_nan=False)
+    use_fulltext: bool = True
+    fulltext_weight: float = Field(default=1.0, ge=0, allow_inf_nan=False)
     rrf_k: int = Field(default=60, ge=1)
     rerank_top_k: int = Field(default=20, ge=1)
     use_triples: bool = True
-    filter_triples: bool = True
-    rerank_passages: bool = True
+    filter_triples: bool = False
+    rerank_passages: bool = False
     llm_options: dict = Field(
         default_factory=lambda: {
             "temperature": 0.0,

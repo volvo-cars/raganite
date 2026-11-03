@@ -4,7 +4,7 @@ This guide shows how to repeat the HotpotQA or LoCoMo runs from the repository r
 
 You need a working install and model credentials. Put them in `benchmark/.env`. The command reads that file, then the repository `.env`. A variable that is already set stays as it is. See `benchmark/.env.example`.
 
-When `AZURE_OPENAI_API_KEY` is set, chat and embeddings use the Azure deployments in that file. The published runs used gpt-4o and `text-embedding-3-large`. Without that key, the chat model is `OPENAI_CHAT_MODEL` (default `gpt-4o`) and the embedding model is `OPENAI_EMBEDDING_MODEL` (default `text-embedding-3-small`).
+When `AZURE_OPENAI_API_KEY` is set, chat and embeddings use the Azure deployments named in that file. The published runs used gpt-4o and `text-embedding-3-large`. Without that key, chat and embeddings come from `RAGANITE_CHAT__*` and `RAGANITE_EMBEDDINGS__*` in `.env`.
 
 `python -m benchmark` and `raganite-bench` are the same command. Flags are listed in the [benchmark command reference](../reference/benchmark-cli.md).
 
@@ -18,7 +18,7 @@ SQLite needs no extra service. This answers the full set:
 python -m benchmark hotpotqa --questions 1000
 ```
 
-The file `benchmark/results/hotpotqa.jsonl` gains one row per answered question. The same folder receives `hotpotqa.summary.json` and `hotpotqa.manifest.json`. Running the command again skips questions already in that file. A different mode, backend, or question count needs a new `--output` path.
+The file `benchmark/results/hotpotqa.jsonl` gains one row per answered question, including that question's token and timing usage. The same folder receives `hotpotqa.summary.json`, `hotpotqa.usage.json`, and `hotpotqa.manifest.json`. The usage file has indexing tokens, question tokens, and the sum. Indexing usage is written as soon as indexing finishes. Running the command again skips questions already in that file. A different mode, backend, or question count needs a new `--output` path.
 
 ### Use Neo4j
 

@@ -52,6 +52,23 @@ def _average(rows: list[dict], field: str) -> dict[str, float]:
     return {key: mean(row.get(field, {}).get(key, 0.0) for row in rows) for key in keys}
 
 
+def benchmark_usage_report(indexing: dict | None, questions: dict | None) -> dict:
+    """Indexing usage, question usage, and the sum of both."""
+    from raganite.clients.llm.usage import combine_usage
+
+    report: dict = {}
+    parts = []
+    if indexing:
+        report["indexing"] = indexing
+        parts.append(indexing)
+    if questions:
+        report["questions"] = questions
+        parts.append(questions)
+    if parts:
+        report["total"] = combine_usage(parts)
+    return report
+
+
 def aggregate(rows: list[dict]) -> dict:
     from raganite.clients.llm.usage import combine_usage
 

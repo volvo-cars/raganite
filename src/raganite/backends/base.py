@@ -144,6 +144,12 @@ class GraphBackend(ABC):
         """Write edges owned by every listed document. Each owner is a source and path."""
 
     @abstractmethod
+    def store_shared_nodes(
+        self, nodes: Sequence[tuple[GraphNode, Sequence[tuple[str, str]]]]
+    ) -> None:
+        """Write nodes owned by every listed document. Each owner is a source and path."""
+
+    @abstractmethod
     def document_hash(self, source: str, path: str) -> str | None:
         """Return the hash of the last successfully committed document."""
 
@@ -203,8 +209,7 @@ class GraphBackend(ABC):
     def prepare(self) -> None:
         """Validate fact storage and cache traversal topology without writing data."""
 
-    def direct_passages(self, embedding: list[float], *, top_k: int) -> list[PassageHit]:
-        hits = self.search_chunks(embedding, top_k=top_k)
+    def _passage_hits(self, hits: list[SearchHit]) -> list[PassageHit]:
         rows = []
         for hit in hits:
             properties = hit.node.properties
@@ -226,6 +231,13 @@ class GraphBackend(ABC):
             )
             rows.append(PassageHit(hit.node.id, source, text, hit.score))
         return rows
+
+    def direct_passages(self, embedding: list[float], *, top_k: int) -> list[PassageHit]:
+        return self._passage_hits(self.search_chunks(embedding, top_k=top_k))
+
+    def lexical_passages(self, query: str, *, top_k: int) -> list[PassageHit]:
+        """Rank chunks by full text and return the same passage records as vectors."""
+        return self._passage_hits(self.search_fulltext(query, top_k=top_k))
 
     @abstractmethod
     def search_facts(self, embedding: list[float], *, top_k: int = 30) -> list[FactHit]:

@@ -61,8 +61,10 @@ config = RaganiteConfig.from_file("settings.toml")
 | --- | --- | --- |
 | `top_k` | `200` | How many passages `Retriever` keeps before a caller slices them |
 | `use_triples` | `true` | Search facts and expand them, or use direct chunk search only |
-| `filter_triples` | `true` | Ask the chat model to drop weak facts |
-| `rerank_passages` | `true` | Ask the chat model to reorder the final passages |
+| `use_fulltext` | `true` | Fuse full-text hits with the chunk and fact lists |
+| `fulltext_weight` | `1.0` | Weight of the full-text list in fusion |
+| `filter_triples` | `false` | Ask the chat model to drop weak facts |
+| `rerank_passages` | `false` | Ask the chat model to reorder the final passages |
 | `expansion_depth` | `2` | How far fact expansion walks, from 0 to 5 |
 
 The CLI `retrieve` command still defaults `--top-k` to `5`. That limit applies after ranking. It does not change `RetrievalConfig.top_k`.

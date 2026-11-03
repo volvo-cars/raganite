@@ -213,8 +213,14 @@ def _run_locomo_conversations(options, chosen, dimensions) -> None:
     from raganite.graph import KnowledgeGraph
     from raganite.retrieval import Retriever
 
+    # The published and baseline runs filter facts and rerank passages.
+    # Those flags are explicit so a cheaper library default does not change this score.
     retrieval = RetrievalConfig(
-        workers=options["concurrency"], top_k=options["top_k"], rerank_top_k=20
+        workers=options["concurrency"],
+        top_k=options["top_k"],
+        rerank_top_k=20,
+        filter_triples=True,
+        rerank_passages=True,
     )
     output = Path(options["output"])
     output.parent.mkdir(parents=True, exist_ok=True)

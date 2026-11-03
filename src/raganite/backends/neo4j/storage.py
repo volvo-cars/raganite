@@ -359,6 +359,52 @@ class _Neo4jStorage(GraphBackend):
         with self._driver.session(database=self.config.database) as session:
             session.execute_write(write)
 
+    def store_shared_nodes(
+        self, nodes: Sequence[tuple[GraphNode, Sequence[tuple[str, str]]]]
+    ) -> None:
+        """Write nodes owned by every listed document. Each owner is a source and path."""
+        self.require_writable()
+        if not nodes:
+            return
+
+        def write(tx):
+            for node, owners in nodes:
+                labels = ":".join(quote_identifier(label) for label in node.labels)
+                scalar = {
+                    key: value
+                    for key, value in node.properties.items()
+                    if isinstance(value, (str, int, float, bool))
+                }
+                tx.run(
+                    "MERGE (n:RaganiteNode {namespace:$namespace, raganite_id:$id}) "
+                    f"SET n:{labels}, n += $scalar, n.namespace=$namespace, n.raganite_id=$id, "
+                    "n.kind=$kind, n.label=$label, n.properties_json=$properties, n.embedding=$embedding",
+                    {
+                        "namespace": self.namespace,
+                        "id": node.id,
+                        "kind": node.kind,
+                        "label": node.label,
+                        "scalar": scalar,
+                        "properties": json.dumps(node.properties),
+                        "embedding": node.embedding,
+                    },
+                ).consume()
+                for source, path in owners:
+                    tx.run(
+                        "MATCH (n:RaganiteNode {namespace:$namespace, raganite_id:$id}) "
+                        "MATCH (d:RaganiteOwner {namespace:$namespace, source:$source, path:$path}) "
+                        "MERGE (d)-[:OWNS_NODE]->(n)",
+                        {
+                            "namespace": self.namespace,
+                            "id": node.id,
+                            "source": source,
+                            "path": path,
+                        },
+                    ).consume()
+
+        with self._driver.session(database=self.config.database) as session:
+            session.execute_write(write)
+
     def document_hash(self, source: str, path: str) -> str | None:
         if self.layout == "native":
             rows = self._read(

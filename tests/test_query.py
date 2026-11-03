@@ -219,6 +219,35 @@ def test_query_help_describes_answering():
     assert "answer" in result.output.lower()
 
 
+def test_default_retrieval_skips_the_chat_ranking_steps():
+    config = RetrievalConfig()
+    assert config.filter_triples is False
+    assert config.rerank_passages is False
+    assert config.use_triples is True
+
+
+def test_text_output_names_a_ranking_step_that_ran():
+    from raganite.cli import _ranking_note
+
+    assert _ranking_note([]) is None
+    assert (
+        _ranking_note(
+            [
+                {
+                    "metadata": {
+                        "triple_filter_status": "disabled",
+                        "passage_rerank_status": "llm",
+                    }
+                }
+            ]
+        )
+        == "passage rerank: llm"
+    )
+    assert (
+        _ranking_note([{"metadata": {"triple_filter_status": "disabled"}}]) is None
+    )
+
+
 def test_query_requires_an_llm():
     backend = _backend()
     retriever = Retriever(

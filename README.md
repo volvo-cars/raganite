@@ -25,6 +25,8 @@ uv run raganite retrieve "What is the capital of France?" --top-k 5 --format tex
 uv run raganite query "What is the capital of France?" --top-k 5 --format text
 ```
 
+A directory index reads text files whose names match the include globs (`*.py`, `*.md`, `*.rst`, `*.txt`, and the other text patterns in [Indexing](docs/guides/indexing.md)). PDF, HTML, and Office files are left out. A default `query` embeds the question once, fuses chunk vectors with full-text hits and fact expansion, and calls the chat model once to write the answer. Fact filtering and passage reranking are off unless you turn them on. `--top-k` shortens the list after retrieval. SQLite scores every stored vector in the process.
+
 `retrieve` prints each passage's rank, title, source, score, and text. `--format json` adds the supporting facts in `evidence`, plus metadata. `query` prints the answer, then those same passage lines. `--format json` on `query` also includes token and timing usage.
 
 The commands are `init`, `config`, `index`, `retrieve`, `query`, and `clear`. The longer walkthrough is [Your first index](docs/getting-started/quickstart.md). Flags are in the [command line reference](docs/reference/cli.md).
@@ -60,7 +62,7 @@ print(answered.answer)
 | Setup | Nothing extra after `uv sync` | A Bolt URI, user, and password |
 | Default | Yes. File `.raganite/graph.sqlite3` | No. Opt in with config |
 
-Start with SQLite. Point the same `retrieve` and `query` calls at Neo4j when you want that store. There is no hosted Raganite service. Steps are in [Neo4j](docs/guides/neo4j.md).
+Start with SQLite. SQLite scores every stored vector in the process, so it fits a small corpus. Point the same `retrieve` and `query` calls at Neo4j when that scan is the wrong cost. There is no hosted Raganite service. Steps are in [Neo4j](docs/guides/neo4j.md).
 
 ## Model providers
 
@@ -83,7 +85,7 @@ OpenAI, Azure OpenAI, and Hugging Face can each supply the chat model and the em
 
 ## Benchmarks
 
-These are the latest benchmark runs. The full tables are in [Benchmarks](docs/guides/benchmarking.md).
+These are the latest benchmark runs. Both used gpt-4o and `text-embedding-3-large`. The HotpotQA comparison on the benchmarks page uses other models, so those rows are not a same-stack result. The full tables are in [Benchmarks](docs/guides/benchmarking.md).
 
 | Benchmark | Score | What it counts |
 | --- | --- | --- |
