@@ -135,6 +135,35 @@ class _SQLiteStorage(GraphBackend):
                 self._readers.append(connection)
         return connection
 
+    def _rows(
+        self,
+        statement: str,
+        params: Sequence | dict = (),
+        prepare=None,
+    ) -> list[sqlite3.Row]:
+        """Read rows. Memory databases share one cache, so reads wait for writes."""
+
+        def run(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+            if prepare is not None:
+                prepare(connection)
+            return connection.execute(statement, params).fetchall()
+
+        if self._wal or self.read_only:
+            return run(self._reader())
+        with self._lock:
+            # A SELECT on the writer connection can open a deferred transaction.
+            # Close it before releasing the lock, or the next write blocks forever.
+            started = not self._connection.in_transaction
+            try:
+                rows = run(self._connection)
+            except Exception:
+                if started and self._connection.in_transaction:
+                    self._connection.rollback()
+                raise
+            if started and self._connection.in_transaction:
+                self._connection.commit()
+            return rows
+
     def ensure_indexes(self) -> None:
         with self._lock, self._connection:
             if not self.read_only:
@@ -372,15 +401,11 @@ class _SQLiteStorage(GraphBackend):
         )
 
     def document_hash(self, source: str, path: str) -> str | None:
-        row = (
-            self._reader()
-            .execute(
-                "SELECT content_hash FROM documents WHERE namespace=? AND source=? AND path=?",
-                (self.namespace, source, path),
-            )
-            .fetchone()
+        rows = self._rows(
+            "SELECT content_hash FROM documents WHERE namespace=? AND source=? AND path=?",
+            (self.namespace, source, path),
         )
-        return row[0] if row else None
+        return rows[0][0] if rows else None
 
     def delete_documents(self, source: str | None = None, *, keep_paths: Sequence[str] = ()) -> int:
         self.require_writable()
@@ -420,7 +445,7 @@ class _SQLiteStorage(GraphBackend):
         if ids is not None:
             query += " AND id IN (" + ",".join("?" for _ in ids) + ")"
             params.extend(ids)
-        rows = self._reader().execute(query + " ORDER BY id", params).fetchall()
+        rows = self._rows(query + " ORDER BY id", params)
         results = [self._node(row) for row in rows]
         if term is not None:
             results = [
@@ -437,13 +462,9 @@ class _SQLiteStorage(GraphBackend):
     def edges(self, *, node_ids: Sequence[str] | None = None) -> list[GraphEdge]:
         if node_ids is not None and not node_ids:
             return []
-        rows = (
-            self._reader()
-            .execute(
-                "SELECT * FROM edges WHERE namespace=? ORDER BY id",
-                (self.namespace,),
-            )
-            .fetchall()
+        rows = self._rows(
+            "SELECT * FROM edges WHERE namespace=? ORDER BY id",
+            (self.namespace,),
         )
         ids = set(node_ids) if node_ids is not None else None
         return [
@@ -469,15 +490,11 @@ class _SQLiteStorage(GraphBackend):
         if top_k < 1:
             raise ValueError("top_k must be positive")
         validate_vector(embedding, self.dimensions)
-        rows = (
-            self._reader()
-            .execute(
-                "SELECT n.* FROM nodes n WHERE n.namespace=? AND n.kind=? AND n.embedding IS NOT NULL "
-                "AND (? IS NULL OR EXISTS (SELECT 1 FROM document_nodes o WHERE "
-                "o.namespace=n.namespace AND o.node_id=n.id AND o.source=?))",
-                (self.namespace, kind, source, source),
-            )
-            .fetchall()
+        rows = self._rows(
+            "SELECT n.* FROM nodes n WHERE n.namespace=? AND n.kind=? AND n.embedding IS NOT NULL "
+            "AND (? IS NULL OR EXISTS (SELECT 1 FROM document_nodes o WHERE "
+            "o.namespace=n.namespace AND o.node_id=n.id AND o.source=?))",
+            (self.namespace, kind, source, source),
         )
         hits = []
         for row in rows:
@@ -495,17 +512,13 @@ class _SQLiteStorage(GraphBackend):
         if not tokens:
             return []
         expression = " OR ".join('"' + token + '"' for token in tokens)
-        rows = (
-            self._reader()
-            .execute(
-                "SELECT n.*, -bm25(chunks_fts) AS score FROM chunks_fts "
-                "JOIN nodes n ON n.namespace=chunks_fts.namespace AND n.id=chunks_fts.node_id "
-                "WHERE chunks_fts MATCH ? AND n.namespace=? AND (? IS NULL OR EXISTS "
-                "(SELECT 1 FROM document_nodes o WHERE o.namespace=n.namespace AND o.node_id=n.id AND o.source=?)) "
-                "ORDER BY score DESC, n.id LIMIT ?",
-                (expression, self.namespace, source, source, top_k),
-            )
-            .fetchall()
+        rows = self._rows(
+            "SELECT n.*, -bm25(chunks_fts) AS score FROM chunks_fts "
+            "JOIN nodes n ON n.namespace=chunks_fts.namespace AND n.id=chunks_fts.node_id "
+            "WHERE chunks_fts MATCH ? AND n.namespace=? AND (? IS NULL OR EXISTS "
+            "(SELECT 1 FROM document_nodes o WHERE o.namespace=n.namespace AND o.node_id=n.id AND o.source=?)) "
+            "ORDER BY score DESC, n.id LIMIT ?",
+            (expression, self.namespace, source, source, top_k),
         )
         return [SearchHit(node=self._node(row), score=row["score"]) for row in rows]
 

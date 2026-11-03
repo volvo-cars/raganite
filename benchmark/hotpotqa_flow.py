@@ -301,7 +301,7 @@ def run_hotpotqa_benchmark(options) -> None:
         rerank_top_k=options["rerank_top_k"],
         use_triples=options["mode"] != "direct",
         filter_triples=options["mode"] == "full",
-        rerank_passages=options["mode"] == "full",
+        reranker=options.get("reranker") or ("llm" if options["mode"] == "full" else "none"),
     )
     config = store_config(
         options["backend"],

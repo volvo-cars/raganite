@@ -1,6 +1,7 @@
 """Query retrieves passages and answers from those passages."""
 
 import asyncio
+import threading
 
 import pytest
 from langchain_core.embeddings import Embeddings
@@ -8,7 +9,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from raganite.backends.base import DocumentGraph, GraphNode
+from raganite.backends.base import DocumentGraph, GraphBackend, GraphNode
+from raganite.backends.models import PassageHit
 from raganite.backends.sqlite import SQLiteBackend
 from raganite.config import RaganiteConfig, RetrievalConfig, SQLiteConfig
 from raganite.graph import KnowledgeGraph
@@ -209,6 +211,19 @@ async def test_concurrent_aqueries_include_retrieval_usage():
         backend.close()
 
 
+def test_query_text_output_prints_only_the_answer(capsys):
+    from raganite.cli import _emit
+
+    _emit(
+        {
+            "answer": "Paris",
+            "passages": [{"title": "notes", "source": "paris.txt", "score": 1.0, "text": "Paris is the capital."}],
+        },
+        "text",
+    )
+    assert capsys.readouterr().out == "Paris\n"
+
+
 def test_query_help_describes_answering():
     from click.testing import CliRunner
 
@@ -224,6 +239,93 @@ def test_default_retrieval_skips_the_chat_ranking_steps():
     assert config.filter_triples is False
     assert config.rerank_passages is False
     assert config.use_triples is True
+    assert config.triple_top_k == 10
+
+
+class _ParallelSearches(GraphBackend):
+    """Block each search until the other two have started."""
+
+    def __init__(self):
+        super().__init__(namespace="demo", dimensions=2)
+        self._gate = threading.Barrier(3)
+        self.fact_top_k = None
+
+    def _arrive(self) -> None:
+        self._gate.wait(timeout=2)
+
+    def direct_passages(self, embedding, *, top_k):
+        self._arrive()
+        return [PassageHit("chunk", "notes.txt", "Paris is the capital.", 1.0)]
+
+    def lexical_passages(self, query, *, top_k):
+        self._arrive()
+        return []
+
+    def search_facts(self, embedding, *, top_k=10):
+        self.fact_top_k = top_k
+        self._arrive()
+        return []
+
+    def expand_facts(self, facts, *, depth=2, limit=5000, degree_penalty_weight=0.25):
+        return []
+
+    def ensure_indexes(self) -> None:
+        return None
+
+    def prepare(self) -> None:
+        return None
+
+    def replace_document(self, graph):
+        raise NotImplementedError
+
+    def store_shared_edges(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def store_shared_nodes(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def has_sequence(self, source: str) -> bool:
+        return False
+
+    def delete_sequence(self, source: str) -> None:
+        return None
+
+    def document_hash(self, source: str, path: str):
+        return None
+
+    def delete_documents(self, source=None, *, keep_paths=()):
+        return 0
+
+    def nodes(self, **kwargs):
+        return []
+
+    def edges(self, **kwargs):
+        return []
+
+    def vector_search(self, *args, **kwargs):
+        return []
+
+    def fulltext_search(self, *args, **kwargs):
+        return []
+
+    def close(self) -> None:
+        return None
+
+
+def test_the_three_searches_run_together_and_fewer_facts_start_the_walk():
+    backend = _ParallelSearches()
+    retriever = Retriever(
+        backend,
+        FixedEmbeddings(),
+        None,
+        RetrievalConfig(filter_triples=False, rerank_passages=False, workers=1),
+    )
+    try:
+        passages = retriever.retrieve("What is the capital of France?")
+    finally:
+        retriever.close()
+    assert passages[0].text == "Paris is the capital."
+    assert backend.fact_top_k == 10
 
 
 def test_text_output_names_a_ranking_step_that_ran():

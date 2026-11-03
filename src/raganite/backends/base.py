@@ -248,7 +248,7 @@ class GraphBackend(ABC):
         return self._passage_hits(self.search_fulltext(query, top_k=top_k))
 
     @abstractmethod
-    def search_facts(self, embedding: list[float], *, top_k: int = 30) -> list[FactHit]:
+    def search_facts(self, embedding: list[float], *, top_k: int = 10) -> list[FactHit]:
         """Return ranked facts with both endpoints and semantic degrees."""
 
     @abstractmethod

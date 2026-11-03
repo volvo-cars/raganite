@@ -27,7 +27,7 @@ uv run raganite query "What is the capital of France?" --top-k 5 --format text
 
 A directory index reads text files whose names match the include globs (`*.py`, `*.md`, `*.rst`, `*.txt`, and the other text patterns in [Indexing](docs/guides/indexing.md)). PDF, HTML, and Office files are left out. A default `query` embeds the question once, fuses chunk vectors with full-text hits and fact expansion, and calls the chat model once to write the answer. Fact filtering and passage reranking are off unless you turn them on. `--top-k` shortens the list after retrieval. SQLite scores every stored vector in the process.
 
-`retrieve` prints each passage's rank, title, source, score, and text. `--format json` adds the supporting facts in `evidence`, plus metadata. `query` prints the answer, then those same passage lines. `--format json` on `query` also includes token and timing usage.
+`retrieve` prints each passage's rank, title, source, score, and text. `--format json` adds the supporting facts in `evidence`, plus metadata. `query` text output prints only the answer. `--format json` also includes the passages, their evidence, and token and timing usage.
 
 The commands are `init`, `config`, `index`, `retrieve`, `query`, and `clear`. The longer walkthrough is [Your first index](docs/getting-started/quickstart.md). Flags are in the [command line reference](docs/reference/cli.md).
 
@@ -66,7 +66,7 @@ Start with SQLite. SQLite scores every stored vector in the process, so it fits 
 
 ## Model providers
 
-OpenAI, Azure OpenAI, and Hugging Face can each supply the chat model and the embedding model. Ollama can supply the chat model. Install the optional extras with `uv sync --extra huggingface` or `uv sync --extra ollama`. Indexing accepts LangChain `Document` objects. [Model providers](docs/guides/providers.md) shows the clients.
+OpenAI, Azure OpenAI, and Hugging Face can each supply the chat model and the embedding model. Ollama can supply the chat model. Install the optional extras with `uv sync --extra huggingface` or `uv sync --extra ollama`. Local cross-encoder reranking is `uv sync --extra rerank`. Indexing accepts LangChain `Document` objects. [Model providers](docs/guides/providers.md) shows the clients.
 
 ## Documentation
 

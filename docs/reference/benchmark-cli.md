@@ -15,7 +15,8 @@ Download HotpotQA, index it, and answer the first questions. Repeating a command
 | `--questions` | `200` | First N questions, from 1 to 1,000. The full corpus is still indexed |
 | `--concurrency` | CPU count | Questions evaluated at once |
 | `--index-workers` | CPU count | Documents indexed at once |
-| `--mode` | `full` | `full` ranks facts and passages. `direct` skips facts. `triple-unfiltered` skips the fact filter and the passage rerank |
+| `--mode` | `full` | `full` ranks facts and passages with the chat model. `direct` skips facts. `triple-unfiltered` skips the fact filter and the passage rerank |
+| `--reranker` | unset | `none`, `llm`, or `cross-encoder`. `full` uses the chat model unless this is set |
 | `--backend` | `sqlite` | `sqlite` or `neo4j` |
 | `--skip-index` | off | Reuse the selected graph |
 | `--data-dir` | `benchmark/data` | Where the downloaded corpus is stored |

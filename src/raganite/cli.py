@@ -258,8 +258,6 @@ def _print_passages(passages: list[dict[str, Any]]) -> None:
 def _emit(payload: Any, output_format: str) -> None:
     if output_format == "text" and isinstance(payload, dict) and "answer" in payload:
         print(payload["answer"])
-        print()
-        _print_passages(payload.get("passages") or [])
     elif output_format == "text" and isinstance(payload, list):
         _print_passages(payload)
     else:
@@ -296,7 +294,7 @@ def _execute(args: SimpleNamespace, config: Any) -> int:
 
     needs_llm = (
         args.command in {"index", "query"}
-        or config.retrieval.rerank_passages
+        or config.retrieval.active_reranker == "llm"
         or (config.retrieval.use_triples and config.retrieval.filter_triples)
     )
     embeddings = create_embedding_client(config.embeddings, dimensions=config.embedding_dimensions)
@@ -484,8 +482,9 @@ def retrieve(ctx: click.Context, **options: Any) -> None:
 def query(ctx: click.Context, **options: Any) -> None:
     """Retrieve passages for QUESTION, then answer from those passages.
 
-    Uses existing indexed data in read-only mode. Text output prints the answer
-    and then the passages. JSON output also includes token and timing usage.
+    Uses existing indexed data in read-only mode. Text output prints only the
+    answer. JSON output includes the passages, their evidence, and token and
+    timing usage.
     """
     _run(ctx, "query", **options)
 

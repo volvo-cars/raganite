@@ -136,7 +136,7 @@ class RetrievalConfig(ConfigModel):
 
     workers: int = Field(default_factory=cpu_workers, ge=1)
     top_k: int = Field(default=200, ge=1)
-    triple_top_k: int = Field(default=30, ge=1)
+    triple_top_k: int = Field(default=10, ge=1)
     filtered_triple_k: int = Field(default=8, ge=1)
     expansion_depth: int = Field(default=2, ge=0, le=5)
     expansion_limit: int = Field(default=5000, ge=1)
@@ -149,6 +149,8 @@ class RetrievalConfig(ConfigModel):
     use_triples: bool = True
     filter_triples: bool = False
     rerank_passages: bool = False
+    reranker: Literal["none", "llm", "cross-encoder", "compressor"] = "none"
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     llm_options: dict = Field(
         default_factory=lambda: {
             "temperature": 0.0,
@@ -162,6 +164,15 @@ class RetrievalConfig(ConfigModel):
         if self.filtered_triple_k > self.triple_top_k:
             raise ValueError("filtered_triple_k cannot exceed triple_top_k")
         return self
+
+    @property
+    def active_reranker(self) -> Literal["none", "llm", "cross-encoder", "compressor"]:
+        """The reranker that will run. ``rerank_passages`` still selects the chat model."""
+        if self.reranker != "none":
+            return self.reranker
+        if self.rerank_passages:
+            return "llm"
+        return "none"
 
 
 class RaganiteConfig(BaseSettings):

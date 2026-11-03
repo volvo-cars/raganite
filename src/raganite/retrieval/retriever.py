@@ -34,6 +34,7 @@ from raganite.clients.llm.usage import track_run, usage_stage
 from raganite.config import RetrievalConfig
 
 from .models import Answer, FactEvidence, Passage, RetrievalResult
+from .rerank import as_compressor, langchain_cross_encoder, order_by_documents
 
 ANSWER_PROMPT = (
     "Answer the question using only the passages. "
@@ -108,6 +109,7 @@ class Retriever:
         title_by_source: Mapping[str, str] | None = None,
         triple_filter_prompt: str = FILTER_PROMPT,
         passage_rerank_prompt: str = RERANK_PROMPT,
+        passage_reranker: Any | None = None,
     ):
         if not isinstance(backend, GraphBackend):
             raise TypeError("The backend must implement GraphBackend")
@@ -118,17 +120,28 @@ class Retriever:
         self.llm = llm.model if isinstance(llm, LLMClient) else llm
         self.config = config or RetrievalConfig()
         if self.llm is None and (
-            self.config.rerank_passages or (self.config.use_triples and self.config.filter_triples)
+            self.config.active_reranker == "llm"
+            or (self.config.use_triples and self.config.filter_triples)
         ):
             raise ValueError("An LLM is required for triple filtering and passage reranking")
+        if self.config.active_reranker == "compressor" and passage_reranker is None:
+            raise ValueError("reranker='compressor' needs a passage reranker with compress_documents")
         self._titles = dict(title_by_source or {})
         self._filter_prompt = triple_filter_prompt
         self._rerank_prompt = passage_rerank_prompt
+        self._passage_reranker = as_compressor(passage_reranker)
+        if self._passage_reranker is None and self.config.active_reranker == "cross-encoder":
+            self._passage_reranker = as_compressor(
+                langchain_cross_encoder(self.config.reranker_model, self.config.rerank_top_k)
+            )
         if self.config.use_triples:
             self.backend.prepare()
         self._slots = BoundedSemaphore(self.config.workers)
         self._pool = ThreadPoolExecutor(
             max_workers=self.config.workers, thread_name_prefix="raganite-retrieval"
+        )
+        self._search_pool = ThreadPoolExecutor(
+            max_workers=3, thread_name_prefix="raganite-search"
         )
 
     def _title(self, source: str) -> str:
@@ -167,8 +180,15 @@ class Retriever:
         self, query: str, passages: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], str]:
         candidates = passages[: self.config.rerank_top_k]
-        if not candidates or not self.config.rerank_passages:
+        kind = self.config.active_reranker
+        if not candidates or kind == "none":
             return passages, "disabled"
+        if kind in {"cross-encoder", "compressor"}:
+            try:
+                compressed = self._passage_reranker.compress(query, candidates)
+                return order_by_documents(passages, compressed, top_k=len(candidates)), kind
+            except Exception:
+                return passages, "request_error_fallback"
         text = "\n\n".join(
             f"{i}. {p['title']}\n{p['text'][:4000]}" for i, p in enumerate(candidates, 1)
         )
@@ -196,7 +216,8 @@ class Retriever:
             raise ValueError("Query must not be empty")
         cfg = self.config
         embedding = self.embeddings.embed_query(query)
-        direct = self.backend.direct_passages(embedding, top_k=cfg.top_k)
+        found = self._search_in_parallel(query, embedding)
+        direct = found["direct"]
         passages: dict[str, dict[str, Any]] = {}
 
         def passage(chunk_id: str, source: str, text: str) -> dict[str, Any]:
@@ -224,7 +245,7 @@ class Retriever:
                 current["direct_score"] = max(current["direct_score"], hit.score)
                 current["direct_rank"] = min(current["direct_rank"] or rank, rank)
         if cfg.use_fulltext:
-            for rank, hit in enumerate(self.backend.lexical_passages(query, top_k=cfg.top_k), 1):
+            for rank, hit in enumerate(found["lexical"], 1):
                 if not hit.chunk_id:
                     continue
                 current = passage(hit.chunk_id, hit.source, hit.text)
@@ -233,7 +254,7 @@ class Retriever:
         filter_status = "disabled"
         expanded = []
         if cfg.use_triples:
-            facts = self.backend.search_facts(embedding, top_k=cfg.triple_top_k)
+            facts = found["facts"]
             selected, filter_status = self._select_facts(query, facts)
             expanded = self.backend.expand_facts(
                 selected,
@@ -405,5 +426,29 @@ class Retriever:
             lambda: context.run(self.retrieve, query, top_k=top_k),
         )
 
+    def _search_in_parallel(self, query: str, embedding: list[float]) -> dict[str, Any]:
+        """Run the chunk, full-text, and fact searches at the same time."""
+        cfg = self.config
+        futures = {
+            "direct": self._search_pool.submit(
+                self.backend.direct_passages, embedding, top_k=cfg.top_k
+            )
+        }
+        if cfg.use_fulltext:
+            futures["lexical"] = self._search_pool.submit(
+                self.backend.lexical_passages, query, top_k=cfg.top_k
+            )
+        if cfg.use_triples:
+            futures["facts"] = self._search_pool.submit(
+                self.backend.search_facts, embedding, top_k=cfg.triple_top_k
+            )
+        try:
+            return {name: future.result() for name, future in futures.items()}
+        except Exception:
+            for future in futures.values():
+                future.cancel()
+            raise
+
     def close(self) -> None:
         self._pool.shutdown(wait=True)
+        self._search_pool.shutdown(wait=True)

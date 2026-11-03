@@ -56,6 +56,10 @@ Prepared for the initial **0.1.0** release.
 - Optional Hugging Face chat and embedding clients, including hosted endpoints,
   and an Ollama chat client. Install them with `uv sync --extra huggingface` or
   `uv sync --extra ollama`.
+- A choice of passage reranker. `none` keeps the fused order and `llm` asks the
+  chat model. `cross-encoder` and a hosted rerank API both go through LangChain's
+  `compress_documents` compressor. Install the local model with `uv sync --extra rerank`.
+  `rerank_passages` still selects the chat model.
 - Searchable facts for every entity-to-entity edge, including the `IN_SESSION`
   and `NEXT` edges written for documents that carry integer `order` and string
   `time` metadata. A `NEXT` fact includes the previous and next times, so
@@ -63,6 +67,10 @@ Prepared for the initial **0.1.0** release.
 
 ### Changed
 
+- `raganite query --format text` prints only the answer. The passages remain in
+  `--format json`.
+- Fact search starts a walk from 10 facts instead of 30. Chunk, full-text, and
+  fact search run at the same time. The HotpotQA benchmark still requests 30.
 - Retrieval defaults to one embedding and no chat-model calls. Full-text hits
   are fused with the chunk-vector and fact lists, and a passage keeps the facts
   that led to it. Set `filter_triples` and `rerank_passages` to ask the chat
@@ -83,6 +91,8 @@ Prepared for the initial **0.1.0** release.
 
 ### Fixed
 
+- SQLite searches that run together read through one connection when the file
+  is not in WAL mode, so a parallel retrieval does not wait on its own write lock.
 - Neo4j traversal discovery treats labels that only repeat the same endpoints
   as one connector. Owned entities carry `RaganiteNode` and `__Entity__`
   together, and owned documents carry `RaganiteNode` and `Document`. Two

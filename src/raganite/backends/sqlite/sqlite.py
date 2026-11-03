@@ -42,39 +42,31 @@ class SQLiteBackend(_SQLiteStorage):
     """Fact-capable SQLite backend with namespace-scoped recursive expansion."""
 
     def prepare(self) -> None:
-        row = (
-            self._reader()
-            .execute(
-                "SELECT 1 FROM nodes WHERE namespace=? AND kind='fact' AND embedding IS NOT NULL LIMIT 1",
-                (self.namespace,),
-            )
-            .fetchone()
+        rows = self._rows(
+            "SELECT 1 FROM nodes WHERE namespace=? AND kind='fact' AND embedding IS NOT NULL LIMIT 1",
+            (self.namespace,),
         )
-        if row is None:
+        if not rows:
             raise ValueError(
                 "Triple retrieval requires embedded facts; enable index_facts before indexing"
             )
 
-    def search_facts(self, embedding: list[float], *, top_k: int = 30) -> list[FactHit]:
+    def search_facts(self, embedding: list[float], *, top_k: int = 10) -> list[FactHit]:
         hits = self.vector_search(embedding, top_k=top_k, kind="fact")
         payload = json.dumps([{"id": h.node.id, "score": h.score} for h in hits])
-        rows = (
-            self._reader()
-            .execute(
-                "SELECT f.id AS fact_id,json_extract(f.properties,'$.relationship_id') AS relationship_id, "
-                "json_extract(f.properties,'$.text') AS text,json_extract(f.properties,'$.relation_type') AS relation_type, "
-                "json_extract(hit.value,'$.score') AS score, "
-                f"s.id AS subject_id,{name('s')} AS subject,{degree('s')} AS subject_degree, "
-                f"o.id AS object_id,{name('o')} AS object,{degree('o')} AS object_degree "
-                "FROM json_each(?) hit JOIN nodes f ON f.namespace=? AND f.id=json_extract(hit.value,'$.id') "
-                f"JOIN edges es ON es.namespace=f.namespace AND es.source=f.id AND es.type='{self.topology.fact_subject}' "
-                f"JOIN edges eo ON eo.namespace=f.namespace AND eo.source=f.id AND eo.type='{self.topology.fact_object}' "
-                "JOIN nodes s ON s.namespace=f.namespace AND s.id=es.target AND s.kind='entity' "
-                "JOIN nodes o ON o.namespace=f.namespace AND o.id=eo.target AND o.kind='entity' "
-                "ORDER BY score DESC",
-                (payload, self.namespace),
-            )
-            .fetchall()
+        rows = self._rows(
+            "SELECT f.id AS fact_id,json_extract(f.properties,'$.relationship_id') AS relationship_id, "
+            "json_extract(f.properties,'$.text') AS text,json_extract(f.properties,'$.relation_type') AS relation_type, "
+            "json_extract(hit.value,'$.score') AS score, "
+            f"s.id AS subject_id,{name('s')} AS subject,{degree('s')} AS subject_degree, "
+            f"o.id AS object_id,{name('o')} AS object,{degree('o')} AS object_degree "
+            "FROM json_each(?) hit JOIN nodes f ON f.namespace=? AND f.id=json_extract(hit.value,'$.id') "
+            f"JOIN edges es ON es.namespace=f.namespace AND es.source=f.id AND es.type='{self.topology.fact_subject}' "
+            f"JOIN edges eo ON eo.namespace=f.namespace AND eo.source=f.id AND eo.type='{self.topology.fact_object}' "
+            "JOIN nodes s ON s.namespace=f.namespace AND s.id=es.target AND s.kind='entity' "
+            "JOIN nodes o ON o.namespace=f.namespace AND o.id=eo.target AND o.kind='entity' "
+            "ORDER BY score DESC",
+            (payload, self.namespace),
         )
         return [FactHit(**dict(row)) for row in rows]
 
@@ -128,9 +120,7 @@ class SQLiteBackend(_SQLiteStorage):
              AND c.id=CASE WHEN connector.source=w.current THEN connector.target ELSE connector.source END
         ORDER BY expansion_score DESC,chunk_id LIMIT :limit
         """
-        connection = self._reader()
-        connection.create_function("raganite_log1p", 1, math.log1p, deterministic=True)
-        rows = connection.execute(
+        rows = self._rows(
             query,
             {
                 "ns": self.namespace,
@@ -139,7 +129,10 @@ class SQLiteBackend(_SQLiteStorage):
                 "depth": depth,
                 "limit": limit,
             },
-        ).fetchall()
+            prepare=lambda connection: connection.create_function(
+                "raganite_log1p", 1, math.log1p, deterministic=True
+            ),
+        )
         return [
             GraphExpansion(
                 **{

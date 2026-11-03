@@ -20,7 +20,7 @@ KnowledgeGraph(
 | Argument | Required | Meaning |
 | --- | --- | --- |
 | `embeddings` | yes | `EmbeddingClient` or a LangChain `Embeddings` |
-| `llm` | for indexing, and for default ranking | `LLMClient` or a LangChain chat model |
+| `llm` | for indexing and for `query`. Also required when fact filtering or the chat reranker is on | `LLMClient` or a LangChain chat model |
 | `config` | no | `RaganiteConfig`. Default SQLite, namespace `default`, 1536 dimensions |
 | `backend` | no | An open `GraphBackend`. Must match `config.namespace` and `config.embedding_dimensions` |
 | `text_splitter` | no | LangChain splitter. Overrides the chunking strategy |
@@ -30,7 +30,7 @@ KnowledgeGraph(
 | `retrieve(question, *, top_k=None)` | `RetrievalResult` | `ValueError` on a blank question or `top_k < 1` |
 | `query(question, *, top_k=None)` | `Answer` | `ValueError` on a blank question, `top_k < 1`, or a missing LLM |
 | `indexer` | `KnowledgeGraphIndexer` | `ValueError` if `llm` was omitted |
-| `retriever` | `Retriever` | Built on first use. Default ranking also requires `llm` |
+| `retriever` | `Retriever` | Built on first use. Default retrieval does not require `llm`. `query`, fact filtering, and the chat reranker do |
 | `close()` | `None` | Closes retrieval workers and a backend this object created |
 
 Use it as a context manager. An injected backend is left open.
@@ -61,6 +61,7 @@ Retriever(
     title_by_source=None,
     triple_filter_prompt=FILTER_PROMPT,
     passage_rerank_prompt=RERANK_PROMPT,
+    passage_reranker=None,
 )
 ```
 
@@ -79,7 +80,7 @@ Frozen. Fields: `question`, `answer`, `passages`, `usage`. `passages` are the re
 
 The answer call uses `RetrievalConfig.llm_options` without `response_format`, so ranking can stay JSON while the answer stays plain text.
 
-If `use_triples` is true, `Retriever` calls `backend.prepare()` at construction. If `filter_triples` or `rerank_passages` is true, `llm` is required.
+If `use_triples` is true, `Retriever` calls `backend.prepare()` at construction. If `filter_triples` is true or the active reranker is `llm`, `llm` is required. `passage_reranker` is a LangChain compressor (`compress_documents`). With `reranker="cross-encoder"` and no object, Raganite builds the local cross-encoder. With `reranker="compressor"`, you must pass one.
 
 A malformed ranking response does not raise. Retrieval keeps the unfiltered or unranked order and records the fallback on passage metadata.
 
@@ -112,7 +113,7 @@ Fields: `backend`, `namespace`, `embedding_dimensions`, `chat`, `embeddings`, `i
 
 `from_file(path)` loads JSON or TOML. Environment variables use the prefix `RAGANITE_` and `__` for nesting. Extra fields are rejected.
 
-`RetrievalConfig` defaults: `top_k=200`, `use_triples=True`, `use_fulltext=True`, `fulltext_weight=1.0`, `filter_triples=False`, `rerank_passages=False`, `expansion_depth=2`. `filtered_triple_k` cannot exceed `triple_top_k`. Full-text hits are fused with chunk vectors and fact expansion, and a passage keeps the facts that led to it. Set the two chat flags true to filter facts and rerank passages. The command line names that step when it runs.
+`RetrievalConfig` defaults: `top_k=200`, `triple_top_k=10`, `use_triples=True`, `use_fulltext=True`, `fulltext_weight=1.0`, `filter_triples=False`, `rerank_passages=False`, `expansion_depth=2`. Chunk, full-text, and fact search run together. `filtered_triple_k` cannot exceed `triple_top_k`. Full-text hits are fused with chunk vectors and fact expansion, and a passage keeps the facts that led to it. Set `filter_triples` to filter facts. Set `reranker` to `llm`, `cross-encoder`, or `compressor` to reorder passages. A compressor is any LangChain object with `compress_documents`, including a hosted rerank API. `rerank_passages` still selects the chat model. The command line names that step when it runs.
 
 `IndexingConfig.index_facts` defaults to `True`. `IndexingConfig.schema_mode` defaults to `free`, and `graph_schema` defaults to `None`, so free mode does not build the code schema. `fixed` uses `graph_schema` when one is set, and otherwise `default_schema()`. Entity resolution merges an exact label and name. A different character stays a separate entity. `ChunkingConfig` defaults to 1500 characters and 200 overlap. `include_globs`, `exclude_globs`, and `max_file_bytes` (default 1,000,000) select files for `index_repository`. The patterns are listed in [Indexing](../guides/indexing.md).
 
@@ -140,7 +141,7 @@ The store contract. Callers normally use `KnowledgeGraph` and do not call these 
 | `prepare()` | Check fact storage and cache traversal topology. Does not write |
 | `direct_passages(embedding, *, top_k)` | Ranked chunk passages for an embedding |
 | `lexical_passages(query, *, top_k)` | The same passage records, ranked by full text |
-| `search_facts(embedding, *, top_k=30)` | Ranked facts with both endpoints and semantic degrees |
+| `search_facts(embedding, *, top_k=10)` | Ranked facts with both endpoints and semantic degrees |
 | `expand_facts(facts, *, depth=2, limit=5000, degree_penalty_weight=0.25)` | Rank entity paths from those facts back to chunks |
 | `close()` | Release connections the backend owns |
 
