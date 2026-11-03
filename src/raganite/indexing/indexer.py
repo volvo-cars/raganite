@@ -49,10 +49,23 @@ from raganite.backends.base import (
 )
 from raganite.clients.llm import EmbeddingClient, LLMClient
 from raganite.clients.llm.usage import UsageReport, track_run, usage_stage
-from raganite.config import RaganiteConfig
+from raganite.config import IndexingConfig, RaganiteConfig
+from raganite.schema import default_schema
 from raganite.schema.topology import GraphTopology
 
 logger = logging.getLogger(__name__)
+
+
+def resolved_entity_id(namespace: str, label: str, name: str) -> str:
+    """One entity for an exact label and name. Any other character stays separate."""
+    return identity("entity", namespace, label, name)
+
+
+def extraction_schema(cfg: IndexingConfig):
+    """Schema passed to extraction. Free mode does not build the code schema."""
+    if cfg.schema_mode != "fixed":
+        return None
+    return cfg.graph_schema if cfg.graph_schema is not None else default_schema()
 
 
 def sequence_position(metadata: dict) -> tuple[int, str] | None:
@@ -75,6 +88,22 @@ def _connect(
         type=rel_type,
         properties=properties or {},
     )
+
+
+def fact_statement(edge: GraphEdge, nodes: dict[str, GraphNode]) -> str | None:
+    """Text for an entity-to-entity edge. Other edges are not facts."""
+    source = nodes.get(edge.source)
+    target = nodes.get(edge.target)
+    if source is None or target is None or source.kind != "entity" or target.kind != "entity":
+        return None
+    subject = source.properties.get("name", source.label)
+    object_ = target.properties.get("name", target.label)
+    suffix = (
+        " | " + json.dumps(edge.properties, ensure_ascii=False, sort_keys=True)
+        if edge.properties
+        else ""
+    )
+    return f"{subject} | {edge.type.replace('_', ' ').lower()} | {object_}{suffix}"
 
 
 def attach_session(
@@ -366,7 +395,7 @@ class KnowledgeGraphIndexer:
         for chunk, vector in zip(chunks.chunks, vectors, strict=True):
             chunk.metadata = {**(chunk.metadata or {}), "embedding": vector}
         adapter = _ExtractionLLM(self.llm, semaphore)
-        schema = cfg.graph_schema if cfg.schema_mode == "fixed" else None
+        schema = extraction_schema(cfg)
         if cfg.schema_mode == "extracted":
             with usage_stage("indexing.extract"):
                 schema = await SchemaFromTextExtractor(llm=adapter).run(text=document.page_content)
@@ -399,9 +428,8 @@ class KnowledgeGraphIndexer:
             )
             node_id = node.id
             name = node.properties.get("name")
-            if kind == "entity" and cfg.perform_entity_resolution and name is not None:
-                # The sample resolver merges the same label + name, not fuzzy matches.
-                node_id = identity("entity", self.backend.namespace, node.label, name)
+            if kind == "entity" and cfg.perform_entity_resolution and isinstance(name, str):
+                node_id = resolved_entity_id(self.backend.namespace, node.label, name)
             mapped[node.id] = node_id
             properties: dict[str, Any] = dict(node.properties)
             if kind in {"document", "chunk"}:
@@ -438,28 +466,28 @@ class KnowledgeGraphIndexer:
         ):
             edge_id = identity("edge", start, rel_type, end)
             edges[edge_id] = GraphEdge(id=edge_id, source=start, target=end, type=rel_type)
+        apply_topology(nodes, edges, topo, document_id=document_id)
+        attach_session(
+            nodes,
+            edges,
+            metadata=document.metadata,
+            namespace=self.backend.namespace,
+            source=source,
+            path=path,
+            topology=topo,
+        )
         if cfg.index_facts:
-            semantic = [
-                e
-                for e in edges.values()
-                if nodes[e.source].kind == nodes[e.target].kind == "entity"
-            ]
-            texts = []
-            for edge in semantic:
-                subject = nodes[edge.source].properties.get("name", nodes[edge.source].label)
-                object_ = nodes[edge.target].properties.get("name", nodes[edge.target].label)
-                suffix = (
-                    " | " + json.dumps(edge.properties, ensure_ascii=False, sort_keys=True)
-                    if edge.properties
-                    else ""
-                )
-                texts.append(
-                    f"{subject} | {edge.type.replace('_', ' ').lower()} | {object_}{suffix}"
-                )
-            if texts:
+            semantic: list[tuple[GraphEdge, str]] = []
+            for edge in edges.values():
+                text = fact_statement(edge, nodes)
+                if text is not None:
+                    semantic.append((edge, text))
+            if semantic:
                 async with semaphore:
-                    fact_vectors = await self.embeddings.aembed_documents(texts)
-                for edge, text, vector in zip(semantic, texts, fact_vectors, strict=True):
+                    fact_vectors = await self.embeddings.aembed_documents(
+                        [text for _, text in semantic]
+                    )
+                for (edge, text), vector in zip(semantic, fact_vectors, strict=True):
                     fact_id = identity("fact", edge.id, text)
                     nodes[fact_id] = GraphNode(
                         id=fact_id,
@@ -480,16 +508,6 @@ class KnowledgeGraphIndexer:
                         edges[edge_id] = GraphEdge(
                             id=edge_id, source=fact_id, target=target, type=rel_type
                         )
-        apply_topology(nodes, edges, topo, document_id=document_id)
-        attach_session(
-            nodes,
-            edges,
-            metadata=document.metadata,
-            namespace=self.backend.namespace,
-            source=source,
-            path=path,
-            topology=topo,
-        )
         return DocumentGraph(
             source=source,
             path=path,
@@ -564,18 +582,70 @@ class KnowledgeGraphIndexer:
                     report.skipped_files.append((path, reason))
                 else:
                     report.failed_files.append((path, reason))
-        if any(sequence_position(document.metadata) is not None for document in documents):
+        ordered = any(sequence_position(document.metadata) is not None for document in documents)
+        if ordered or await asyncio.to_thread(self.backend.has_sequence, source):
             await self._link_sequence(source)
         return report
 
     async def _link_sequence(self, source: str) -> None:
+        await asyncio.to_thread(self.backend.delete_sequence, source)
         stored = await asyncio.to_thread(self.backend.nodes, kind="entity")
+        by_id = {node.id: node for node in stored}
         shared = sequence_edges(
             [node for node in stored if node.properties.get("source") == source],
             self.backend.topology,
         )
-        if shared:
-            await asyncio.to_thread(self.backend.store_shared_edges, shared)
+        if not shared:
+            return
+        await asyncio.to_thread(self.backend.store_shared_edges, shared)
+        if not self.config.indexing.index_facts:
+            return
+        statements = [
+            (edge, owners, text)
+            for edge, owners in shared
+            if (text := fact_statement(edge, by_id)) is not None
+        ]
+        if not statements:
+            return
+        vectors = await self.embeddings.aembed_documents([text for _, _, text in statements])
+        topo = self.backend.topology
+        fact_nodes = []
+        fact_edges = []
+        for (edge, owners, text), vector in zip(statements, vectors, strict=True):
+            fact_id = identity("fact", edge.id, text)
+            fact_nodes.append(
+                (
+                    GraphNode(
+                        id=fact_id,
+                        label="__Fact__",
+                        kind="fact",
+                        properties={
+                            "text": text,
+                            "relation_type": edge.type,
+                            "relationship_id": edge.id,
+                        },
+                        embedding=vector,
+                    ),
+                    owners,
+                )
+            )
+            for rel_type, target in (
+                (topo.fact_subject, edge.source),
+                (topo.fact_object, edge.target),
+            ):
+                fact_edges.append(
+                    (
+                        GraphEdge(
+                            id=identity("edge", fact_id, rel_type, target),
+                            source=fact_id,
+                            target=target,
+                            type=rel_type,
+                        ),
+                        owners,
+                    )
+                )
+        await asyncio.to_thread(self.backend.store_shared_nodes, fact_nodes)
+        await asyncio.to_thread(self.backend.store_shared_edges, fact_edges)
 
     def index_documents(
         self, documents: Sequence[Document], *, source="documents", force=False

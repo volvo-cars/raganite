@@ -24,9 +24,9 @@ Prepared for the initial **0.1.0** release.
   chunking.
 - Configurable extraction schemas: a default code-oriented schema, a supplied
   schema, unconstrained extraction, or a schema inferred from input.
-- Fact-based retrieval combining fact-vector search, LLM triple filtering,
-  degree-penalized graph expansion, passage-level reciprocal rank fusion, and
-  LLM passage reranking.
+- Fact-based retrieval combining fact-vector search, degree-penalized graph
+  expansion, full-text search, and passage-level reciprocal rank fusion.
+  Optional chat-model steps filter weak facts and rerank passages.
 - Typed `Passage` and `FactEvidence` results containing source information,
   graph evidence, scores, and ranking metadata. Answer generation remains
   separate from retrieval.
@@ -56,9 +56,28 @@ Prepared for the initial **0.1.0** release.
 - Optional Hugging Face chat and embedding clients, including hosted endpoints,
   and an Ollama chat client. Install them with `uv sync --extra huggingface` or
   `uv sync --extra ollama`.
+- A choice of passage reranker. `none` keeps the fused order and `llm` asks the
+  chat model. `cross-encoder` and a hosted rerank API both go through LangChain's
+  `compress_documents` compressor. Install the local model with `uv sync --extra rerank`.
+  `rerank_passages` still selects the chat model.
+- Searchable facts for every entity-to-entity edge, including the `IN_SESSION`
+  and `NEXT` edges written for documents that carry integer `order` and string
+  `time` metadata. A `NEXT` fact includes the previous and next times, so
+  session membership and sequence are available to fact search.
 
 ### Changed
 
+- `raganite query --format text` prints only the answer. The passages remain in
+  `--format json`.
+- Fact search starts a walk from 10 facts instead of 30. Chunk, full-text, and
+  fact search run at the same time. The HotpotQA benchmark still requests 30.
+- Retrieval defaults to one embedding and no chat-model calls. Full-text hits
+  are fused with the chunk-vector and fact lists, and a passage keeps the facts
+  that led to it. Set `filter_triples` and `rerank_passages` to ask the chat
+  model to drop weak facts and reorder passages.
+- HotpotQA and LoCoMo take their chat and embedding models from
+  `RAGANITE_CHAT__*` and `RAGANITE_EMBEDDINGS__*` when `AZURE_OPENAI_API_KEY`
+  is unset.
 - Indexing defaults to free extraction, so the model names entities and relations
   from the text. Pass `--schema`, or set `schema_mode` to `fixed`, to keep the
   built-in code schema. The previous default was `fixed`.
@@ -69,5 +88,15 @@ Prepared for the initial **0.1.0** release.
 - Azure OpenAI v1 clients accept `AZURE_OPENAI_ENDPOINT` and
   `AZURE_OPENAI_API_KEY`, and also `OPENAI_API_KEY`, `OPENAI_API_BASE`, and
   `OPENAI_BASE_URL`, so those values do not have to be copied between names.
+
+### Fixed
+
+- SQLite searches that run together read through one connection when the file
+  is not in WAL mode, so a parallel retrieval does not wait on its own write lock.
+- Neo4j traversal discovery treats labels that only repeat the same endpoints
+  as one connector. Owned entities carry `RaganiteNode` and `__Entity__`
+  together, and owned documents carry `RaganiteNode` and `Document`. Two
+  connector types, or two domain labels with the same count, still raise
+  `ValueError`.
 
 

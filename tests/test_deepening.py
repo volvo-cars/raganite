@@ -150,6 +150,126 @@ def test_retrieve_returns_passages_without_scanning_the_store():
         kg.close()
 
 
+def test_a_rare_name_from_fulltext_joins_the_vector_list():
+    backend = _store()
+    _replace(
+        backend,
+        [
+            GraphNode(
+                id="near",
+                label="Chunk",
+                kind="chunk",
+                properties={"text": "general notes about the weather", "path": "near.md"},
+                embedding=[1.0, 0.0],
+            ),
+            GraphNode(
+                id="mid",
+                label="Chunk",
+                kind="chunk",
+                properties={"text": "another plain sentence", "path": "mid.md"},
+                embedding=[0.6, 0.8],
+            ),
+            GraphNode(
+                id="rare",
+                label="Chunk",
+                kind="chunk",
+                properties={"text": "Zephyros signed the letter", "path": "rare.md"},
+                embedding=[0.0, 1.0],
+            ),
+        ],
+        [],
+    )
+    config = RaganiteConfig(
+        backend=SQLiteConfig(path=":memory:"),
+        namespace="demo",
+        embedding_dimensions=2,
+        retrieval=RetrievalConfig(
+            use_triples=False,
+            filter_triples=False,
+            rerank_passages=False,
+            workers=1,
+            top_k=2,
+        ),
+    )
+    kg = KnowledgeGraph(embeddings=FixedEmbeddings(), backend=backend, config=config)
+    try:
+        passages = kg.retrieve("Zephyros")
+        assert [passage.text for passage in passages] == [
+            "general notes about the weather",
+            "Zephyros signed the letter",
+        ]
+        assert passages[1].evidence == ()
+        assert passages[1].metadata["lexical_rank"] == 1
+    finally:
+        kg.close()
+
+
+def test_fulltext_fusion_keeps_the_facts_on_the_passage():
+    topology = GraphTopology(chunk_entity="MENTIONS", fact_subject="SUBJ", fact_object="OBJ")
+    backend = _store(topology)
+    chunk = GraphNode(
+        id="chunk",
+        label="Chunk",
+        kind="chunk",
+        properties={"text": "Zephyros signed the letter", "path": "rare.md"},
+        embedding=[0.0, 1.0],
+    )
+    paris = GraphNode(id="paris", label="City", kind="entity", properties={"name": "Zephyros"})
+    france = GraphNode(id="france", label="Country", kind="entity", properties={"name": "France"})
+    fact = GraphNode(
+        id="fact",
+        label="__Fact__",
+        kind="fact",
+        properties={
+            "text": "Zephyros | signed | the letter",
+            "relation_type": "SIGNED",
+            "relationship_id": "rel",
+        },
+        embedding=[1.0, 0.0],
+    )
+    _replace(
+        backend,
+        [
+            chunk,
+            paris,
+            france,
+            fact,
+            GraphNode(
+                id="near",
+                label="Chunk",
+                kind="chunk",
+                properties={"text": "general notes about the weather", "path": "near.md"},
+                embedding=[1.0, 0.0],
+            ),
+        ],
+        [
+            GraphEdge(id="subj", source="fact", target="paris", type="SUBJ"),
+            GraphEdge(id="obj", source="fact", target="france", type="OBJ"),
+            GraphEdge(id="mention", source="paris", target="chunk", type="MENTIONS"),
+        ],
+    )
+    config = RaganiteConfig(
+        backend=SQLiteConfig(path=":memory:"),
+        namespace="demo",
+        embedding_dimensions=2,
+        retrieval=RetrievalConfig(
+            use_triples=True,
+            filter_triples=False,
+            rerank_passages=False,
+            workers=1,
+            top_k=2,
+        ),
+    )
+    kg = KnowledgeGraph(embeddings=FixedEmbeddings(), backend=backend, config=config)
+    try:
+        passages = kg.retrieve("Zephyros")
+        rare = next(passage for passage in passages if "Zephyros" in passage.text)
+        assert rare.metadata["lexical_rank"] == 1
+        assert [item.fact for item in rare.evidence] == ["Zephyros | signed | the letter"]
+    finally:
+        kg.close()
+
+
 def test_retrieve_rejects_an_empty_question():
     backend = _store()
     config = RaganiteConfig(

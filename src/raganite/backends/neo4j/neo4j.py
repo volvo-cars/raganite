@@ -90,7 +90,7 @@ class Neo4jBackend(_Neo4jStorage):
         )
         return [PassageHit(**row) for row in rows]
 
-    def search_facts(self, embedding: list[float], *, top_k: int = 30) -> list[FactHit]:
+    def search_facts(self, embedding: list[float], *, top_k: int = 10) -> list[FactHit]:
         if top_k < 1:
             raise ValueError("top_k must be positive")
         validate_vector(embedding, self.dimensions)

@@ -22,7 +22,7 @@ Domain relations, such as `CAPITAL_OF`, are not topology. They come from extract
 
 ## Why retrieval looks at facts
 
-A chunk search finds text that is similar to the question. A fact search finds a statement, then walks from its entities back to chunks. Fusing both lists is why one passage can carry `evidence`: the facts that pulled it up. The chat model can drop weak facts and reorder the list. That reorder is ranking. `retrieve` returns the passages. `query` then asks the chat model for a short answer that uses only those passages.
+A chunk search finds text that is similar to the question. A fact search finds a statement, then walks from its entities back to chunks. Fusing both lists is why one passage can carry `evidence`: the facts that pulled it up. That fused order is the default ranking. You can ask the chat model to drop weak facts, or ask it or a cross-encoder to reorder the passages. `retrieve` returns the passages. `query` then asks the chat model for a short answer that uses only those passages.
 
 ## Two stores, one contract
 

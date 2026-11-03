@@ -11,7 +11,7 @@ from langchain_core.documents import Document
 from openai import BadRequestError
 
 from benchmark.fetch import HOTPOT_CORPUS_URL, HOTPOT_QUERIES_URL, ensure_download
-from benchmark.metrics import aggregate, answer_metrics, retrieval_metrics
+from benchmark.metrics import aggregate, answer_metrics, benchmark_usage_report, retrieval_metrics
 from benchmark.results import passages_from_rows, read_rows, save
 from benchmark.store import maybe_index, store_config
 
@@ -103,14 +103,11 @@ def _clients(dimensions: int, *, answer_max_tokens: int = 64):
         ).model
         return embeddings, ranking, answer, (sync_http, async_http)
     from raganite.clients.llm.factory import create_chat_client, create_embedding_client
-    from raganite.config import ModelClientConfig
+    from raganite.config.loading import load_config
 
-    chat_model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o")
-    embedding_model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
-    ranking = create_chat_client(ModelClientConfig(model=chat_model))
-    embeddings = create_embedding_client(
-        ModelClientConfig(model=embedding_model), dimensions=dimensions
-    )
+    settings = load_config()
+    ranking = create_chat_client(settings.chat)
+    embeddings = create_embedding_client(settings.embeddings, dimensions=dimensions)
     return embeddings, ranking, ranking.model, ()
 
 
@@ -157,6 +154,7 @@ async def evaluate_hotpotqa(
     qa_top_k: int,
     output: Path,
     concurrency: int,
+    indexing_usage: dict | None = None,
 ) -> dict:
     output.parent.mkdir(parents=True, exist_ok=True)
     completed = read_rows(output) if output.exists() else {}
@@ -196,8 +194,11 @@ async def evaluate_hotpotqa(
 
     await asyncio.gather(*(evaluate(query) for query in queries))
     summary = aggregate([completed[query["_id"]] for query in queries if query["_id"] in completed])
+    usage = benchmark_usage_report(indexing_usage, summary.get("usage"))
+    summary["usage_report"] = usage
     summary.update({"requested_questions": len(queries), "failures": failures})
     save(output.with_suffix(".summary.json"), summary)
+    save(output.with_suffix(".usage.json"), usage)
     print(json.dumps(summary, indent=2))
     if failures:
         raise RuntimeError("Some questions failed; completed results can be resumed")
@@ -300,7 +301,7 @@ def run_hotpotqa_benchmark(options) -> None:
         rerank_top_k=options["rerank_top_k"],
         use_triples=options["mode"] != "direct",
         filter_triples=options["mode"] == "full",
-        rerank_passages=options["mode"] == "full",
+        reranker=options.get("reranker") or ("llm" if options["mode"] == "full" else "none"),
     )
     config = store_config(
         options["backend"],
@@ -334,13 +335,16 @@ def run_hotpotqa_benchmark(options) -> None:
         report = maybe_index(
             graph.indexer, documents, source="hotpotqa", skip_index=options["skip_index"]
         )
+        indexing_usage = None
         if report is not None:
+            indexing_usage = asdict(report.usage)
             print(
                 f"Indexed {len(report.indexed_files)} passages, "
                 f"skipped {len(report.skipped_files)}, failed {len(report.failed_files)}, "
                 f"{report.usage.total_tokens} tokens in {report.usage.elapsed_seconds:.1f}s",
                 flush=True,
             )
+            save(Path(options["output"]).with_suffix(".usage.json"), {"indexing": indexing_usage})
         retriever = Retriever(
             graph.backend,
             embeddings,
@@ -385,6 +389,7 @@ def run_hotpotqa_benchmark(options) -> None:
                 qa_top_k=options["qa_top_k"],
                 output=output,
                 concurrency=options["concurrency"],
+                indexing_usage=indexing_usage,
             )
         )
     finally:

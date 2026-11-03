@@ -22,6 +22,35 @@ def quote(value: str) -> str:
     return "`" + value.replace("`", "``") + "`"
 
 
+def _resolve_label_tie(tied: list[dict]) -> list[dict]:
+    """Keep one label when the same endpoints were counted once per label.
+
+    Owned entities carry ``RaganiteNode`` and ``__Entity__`` together, and owned
+    documents carry ``RaganiteNode`` and ``Document``. Those repeats are one
+    connector. Different connector types, or two domain labels with the same
+    count, stay ambiguous.
+    """
+    if len(tied) < 2:
+        return tied
+    if len({row["connector_type"] for row in tied}) != 1:
+        return tied
+    specific = [
+        row
+        for row in tied
+        if row["candidate_label"] != "RaganiteNode"
+        and not str(row["candidate_label"]).startswith("__")
+    ]
+    if len(specific) == 1:
+        return specific
+    if specific:
+        return specific
+    for preferred in ("RaganiteNode", "__Entity__"):
+        match = [row for row in tied if row["candidate_label"] == preferred]
+        if match:
+            return match
+    return tied
+
+
 @dataclass(frozen=True)
 class TraversalSchema:
     indexed_label: str
@@ -54,14 +83,23 @@ def discover(backend) -> TraversalSchema:
             f"AND {'' if provenance else 'NOT '}{path_property} "
             "AND NOT $label IN labels(candidate) UNWIND labels(candidate) AS candidate_label "
             "RETURN type(connector) AS connector_type,candidate_label,count(*) AS occurrences "
-            "ORDER BY occurrences DESC,connector_type,candidate_label LIMIT 1",
+            "ORDER BY occurrences DESC,connector_type,candidate_label",
             label=label,
         )
         if not rows:
             raise ValueError(
                 "Could not discover semantic/provenance connectors from the chunk index"
             )
-        roles.append(rows[0])
+        top = rows[0]["occurrences"]
+        tied = [row for row in rows if row["occurrences"] == top]
+        tied = _resolve_label_tie(tied)
+        if len(tied) > 1:
+            role = "provenance" if provenance else "semantic"
+            chosen = ", ".join(
+                f"{row['candidate_label']} via {row['connector_type']}" for row in tied
+            )
+            raise ValueError(f"More than one {role} connector is plausible: {chosen}")
+        roles.append(tied[0])
     return TraversalSchema(
         label,
         roles[0]["candidate_label"],

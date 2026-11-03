@@ -61,10 +61,15 @@ config = RaganiteConfig.from_file("settings.toml")
 | --- | --- | --- |
 | `top_k` | `200` | How many passages `Retriever` keeps before a caller slices them |
 | `use_triples` | `true` | Search facts and expand them, or use direct chunk search only |
-| `filter_triples` | `true` | Ask the chat model to drop weak facts |
-| `rerank_passages` | `true` | Ask the chat model to reorder the final passages |
+| `use_fulltext` | `true` | Fuse full-text hits with the chunk and fact lists |
+| `fulltext_weight` | `1.0` | Weight of the full-text list in fusion |
+| `filter_triples` | `false` | Ask the chat model to drop weak facts |
+| `rerank_passages` | `false` | Ask the chat model to reorder the final passages. Same as `reranker=llm` |
+| `reranker` | `none` | `none` keeps the fused order. `llm` asks the chat model. `cross-encoder` uses LangChain's local cross-encoder. `compressor` uses the compressor you pass to `Retriever` |
+| `reranker_model` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Model for `reranker=cross-encoder`. Install it with `uv sync --extra rerank` |
+| `triple_top_k` | `10` | Facts that can start a graph walk |
 | `expansion_depth` | `2` | How far fact expansion walks, from 0 to 5 |
 
 The CLI `retrieve` command still defaults `--top-k` to `5`. That limit applies after ranking. It does not change `RetrievalConfig.top_k`.
 
-Filtering or reranking requires a chat model. If either flag is on and no model was passed, constructing `Retriever` raises `ValueError`.
+Fact filtering and the chat-model reranker require a chat model. If either is on and no model was passed, constructing `Retriever` raises `ValueError`. The cross-encoder does not use the chat model. A hosted rerank API is the same call: pass any object with `compress_documents` and set `reranker` to `compressor`.

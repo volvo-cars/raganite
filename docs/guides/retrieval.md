@@ -15,9 +15,9 @@ for passage in passages:
 
 Each `Passage` has `source`, `title`, `text`, `score`, `evidence`, and `metadata`. `evidence` is empty when the passage came only from a direct chunk match. `passages.usage` records elapsed time and token totals for that retrieval run.
 
-`retrieve` embeds the question, finds matching chunks, and, by default, searches facts, expands them through the graph, fuses those hits, and asks the chat model to rerank. It does not generate an answer.
+`retrieve` embeds the question once. By default it searches chunks, the full-text index, and facts at the same time, then expands the top 10 facts and fuses the three lists. A passage keeps the facts that led to it on `evidence`. It does not call the chat model. Set `filter_triples` to ask the chat model to drop weak facts. Set `reranker` to `llm` to ask the chat model to reorder passages, to `cross-encoder` for LangChain's local cross-encoder, or to `compressor` and pass a LangChain reranker such as Cohere. Both the local model and an API implement `compress_documents`. `rerank_passages` still selects the chat model. Set `use_fulltext` to false to skip the full-text list. The configured candidate width is applied before `top_k`. `top_k` only shortens the list returned after that work. `retrieve` does not generate an answer. `raganite retrieve --format text` prints `fact filter` or `passage rerank` when that step runs. `raganite query --format text` prints only the answer.
 
-`query` does that retrieval and then asks the chat model to answer from the returned passages:
+`query` does that retrieval and then calls the chat model once to answer from the returned passages. With both ranking flags left off, that is the only chat call:
 
 ```python
 answer = graph.query("What is the capital of France?", top_k=5)
@@ -57,7 +57,7 @@ config = RaganiteConfig(
 )
 ```
 
-`use_triples=False` skips fact search and expansion. The other two flags skip the chat-model steps. With both chat steps off, you can construct retrieval without a chat model.
+`use_triples=False` skips fact search and expansion. `use_fulltext=False` skips the full-text list. Fact filtering and passage reranking already default to off, so retrieval can be constructed without a chat model. `query` still needs one.
 
 ## Titles
 

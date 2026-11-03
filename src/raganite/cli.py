@@ -17,6 +17,7 @@
 
 import json
 import logging
+import re
 import sys
 from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
@@ -206,7 +207,48 @@ def _redact(value: Any) -> Any:
     return value
 
 
+_QUOTED_OR_TOKEN = r'(?:"[^"]*"|\'[^\']*\'|\S+)'
+_SECRET = re.compile(
+    rf"(?i)(?:[\"']?(?:api[_-]?key|authorization|bearer|token)[\"']?\s*[:=]\s*"
+    rf"(?:bearer\s+{_QUOTED_OR_TOKEN}|{_QUOTED_OR_TOKEN}))"
+    rf"|(?:bearer\s+{_QUOTED_OR_TOKEN})"
+    rf"|sk-[A-Za-z0-9_\-]{{8,}}"
+)
+
+
+def redacted_error(reason: str) -> str:
+    """Failure text with credentials removed on every line."""
+    return _SECRET.sub("********", reason)
+
+
+def public_error(reason: str) -> str:
+    """First line of a failure, with credentials removed and the line shortened."""
+    line = redacted_error(reason).splitlines()[0].strip() if reason.strip() else ""
+    if len(line) > 180:
+        line = line[:177] + "..."
+    return line or "indexing_failed"
+
+
+def _ranking_note(passages: list[dict[str, Any]]) -> str | None:
+    """Name a fact filter or passage rerank when that step ran."""
+    if not passages:
+        return None
+    metadata = passages[0].get("metadata") or {}
+    parts = []
+    fact_filter = metadata.get("triple_filter_status")
+    rerank = metadata.get("passage_rerank_status")
+    if fact_filter and fact_filter != "disabled":
+        parts.append(f"fact filter: {fact_filter}")
+    if rerank and rerank != "disabled":
+        parts.append(f"passage rerank: {rerank}")
+    return "; ".join(parts) or None
+
+
 def _print_passages(passages: list[dict[str, Any]]) -> None:
+    note = _ranking_note(passages)
+    if note:
+        print(note)
+        print()
     for rank, passage in enumerate(passages, 1):
         print(f"[{rank}] {passage['title']} ({passage['source']}) score={passage['score']:.6f}")
         print(passage["text"])
@@ -216,8 +258,6 @@ def _print_passages(passages: list[dict[str, Any]]) -> None:
 def _emit(payload: Any, output_format: str) -> None:
     if output_format == "text" and isinstance(payload, dict) and "answer" in payload:
         print(payload["answer"])
-        print()
-        _print_passages(payload.get("passages") or [])
     elif output_format == "text" and isinstance(payload, list):
         _print_passages(payload)
     else:
@@ -254,7 +294,7 @@ def _execute(args: SimpleNamespace, config: Any) -> int:
 
     needs_llm = (
         args.command in {"index", "query"}
-        or config.retrieval.rerank_passages
+        or config.retrieval.active_reranker == "llm"
         or (config.retrieval.use_triples and config.retrieval.filter_triples)
     )
     embeddings = create_embedding_client(config.embeddings, dimensions=config.embedding_dimensions)
@@ -284,11 +324,11 @@ def _execute(args: SimpleNamespace, config: Any) -> int:
     # Provider error messages can include request payloads or credentials.
     if getattr(args, "verbose", 0) >= 2:
         payload["failed_files"] = [
-            {"path": path, "error": reason} for path, reason in report.failed_files
+            {"path": path, "error": redacted_error(reason)} for path, reason in report.failed_files
         ]
     else:
         payload["failed_files"] = [
-            {"path": path, "error": "indexing_failed"} for path, _ in report.failed_files
+            {"path": path, "error": public_error(reason)} for path, reason in report.failed_files
         ]
     payload["total"] = report.total
     _emit(payload, output_format)
@@ -442,8 +482,9 @@ def retrieve(ctx: click.Context, **options: Any) -> None:
 def query(ctx: click.Context, **options: Any) -> None:
     """Retrieve passages for QUESTION, then answer from those passages.
 
-    Uses existing indexed data in read-only mode. Text output prints the answer
-    and then the passages. JSON output also includes token and timing usage.
+    Uses existing indexed data in read-only mode. Text output prints only the
+    answer. JSON output includes the passages, their evidence, and token and
+    timing usage.
     """
     _run(ctx, "query", **options)
 

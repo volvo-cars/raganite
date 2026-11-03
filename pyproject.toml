@@ -27,6 +27,11 @@ dependencies = [
 [project.optional-dependencies]
 huggingface = ["langchain-huggingface[full]>=1.0.0"]
 ollama = ["langchain-ollama>=1.1.0"]
+rerank = [
+    "langchain-classic>=1.0.0",
+    "langchain-community>=0.3",
+    "sentence-transformers>=3.0",
+]
 
 [project.scripts]
 raganite = "raganite.cli:main"

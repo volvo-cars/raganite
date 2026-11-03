@@ -27,7 +27,7 @@ printf 'Paris is the capital of France.\n' > documents/paris.txt
 uv run raganite index documents --source notes
 ```
 
-Raganite creates the SQLite file, splits the text, extracts entities and facts, and stores them under the source name `notes`. Unchanged files are skipped the next time you run the same command.
+Raganite creates the SQLite file, splits the text, extracts entities and facts, and stores them under the source name `notes`. A directory index reads text files that match the include globs. PDF, HTML, and Office files are left out. Unchanged files are skipped the next time you run the same command. SQLite scores every stored vector in the process. Use [Neo4j](../guides/neo4j.md) when that scan is the wrong cost.
 
 ## 4. Ask a question
 
@@ -59,4 +59,4 @@ An empty or blank question raises `ValueError`.
 
 ## What you did
 
-You built one namespace of a knowledge graph from files, then read passages back out of it. Indexing needs a chat model and an embedding model. Retrieval needs the embedding model, and the default ranking also needs the chat model to filter facts and rerank passages.
+You built one namespace of a knowledge graph from files, then read passages back out of it. Indexing needs a chat model and an embedding model. Retrieval needs the embedding model. The default path does not ask the chat model to filter facts or rerank passages. `query` uses the chat model once, to write the answer.

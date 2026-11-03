@@ -94,6 +94,12 @@ def main(ctx: click.Context, verbose: int) -> None:
     help="full ranks facts and passages. direct skips facts. triple-unfiltered skips the fact filter and the passage rerank.",
 )
 @click.option(
+    "--reranker",
+    type=click.Choice(["none", "llm", "cross-encoder"]),
+    default=None,
+    help="Passage reranker. full mode uses the chat model unless this is set.",
+)
+@click.option(
     "--backend", type=click.Choice(["sqlite", "neo4j"]), default="sqlite", show_default=True
 )
 @click.option(

@@ -1,6 +1,6 @@
 # Neo4j
 
-Use Neo4j when the graph should live in Neo4j instead of a SQLite file. You still call `KnowledgeGraph` the same way.
+Use Neo4j when the graph should live in Neo4j instead of a SQLite file. SQLite scores every stored vector in the process. Neo4j uses its vector indexes. You still call `KnowledgeGraph` the same way.
 
 ## Owned layout
 
@@ -55,6 +55,8 @@ backend = Neo4jBackend(
 ```
 
 `layout="native"` forces read-only, even if the config says otherwise. Writes raise `PermissionError`. Use a dedicated database.
+
+Retrieval discovers the chunk label from the vector index, then the semantic connector and the document connector by how often each pair appears. The most frequent pair is kept. Labels that only repeat the same endpoints, such as `RaganiteNode` with `__Entity__` or `Document`, stay one connector. If two connector types share that count, or two domain labels do, retrieval raises `ValueError` and names both.
 
 Pass an injected `driver` if you already have a Neo4j driver. Raganite closes a driver it created. It leaves an injected driver open.
 
