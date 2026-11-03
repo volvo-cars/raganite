@@ -18,7 +18,7 @@ Once Git, uv, and package-registry access are configured:
 git clone git@github.com:volvo-cars/raganite.git
 cd raganite
 git switch -c feature/123-short-description
-uv sync --group dev --python 3.13
+uv sync --group dev --extra rerank --python 3.13
 
 # Make the change, add tests, and add a changelog fragment when appropriate.
 uv run ruff format src benchmark tests
@@ -66,14 +66,15 @@ git config --global user.email "your-email@example.com"
 From the repository root:
 
 ```sh
-uv sync --group dev --python 3.13
+uv sync --group dev --extra rerank --python 3.13
 uv run python --version
 uv run raganite --help
 uv run raganite-bench --help
 ```
 
 This creates `.venv`, installs Raganite in editable mode, and installs the
-development tools: pytest, pytest-asyncio, Ruff, mypy, and ty. Editable mode means
+development tools: pytest, pytest-asyncio, Ruff, mypy, and ty. `--extra rerank`
+installs the cross-encoder packages the retrieval tests import. Editable mode means
 your source edits are used without reinstalling for each change.
 
 You do not need to activate `.venv` when using `uv run`. In JetBrains or another
@@ -234,7 +235,7 @@ documentation tool, Towncrier is resolved separately for this invocation.
 From the repository root, run:
 
 ```sh
-uv sync --group dev
+uv sync --group dev --extra rerank
 uv run ruff format src benchmark tests
 uv run ruff check src
 uv run ty check src

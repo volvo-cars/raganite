@@ -59,9 +59,10 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install development dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --extra rerank
       - name: Run offline tests
         # Tests use local doubles; no Azure/OpenAI keys or live Neo4j are passed.
+        # The rerank extra is installed so the cross-encoder import path exists.
         run: uv run pytest --junitxml=test-results/pytest.xml
       - name: Upload test results
         if: always()
