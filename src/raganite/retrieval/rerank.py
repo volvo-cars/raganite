@@ -24,7 +24,9 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def order_by_documents(passages: list[dict[str, Any]], documents: list, *, top_k: int) -> list[dict]:
+def order_by_documents(
+    passages: list[dict[str, Any]], documents: list, *, top_k: int
+) -> list[dict]:
     """Apply a compressor's order to the rerank window and keep every passage."""
     window = passages[:top_k]
     ordered: list[dict[str, Any]] = []

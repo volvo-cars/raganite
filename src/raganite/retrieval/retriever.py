@@ -19,7 +19,7 @@ import asyncio
 import contextvars
 import json
 from collections.abc import Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from threading import BoundedSemaphore
 from typing import Any
@@ -125,7 +125,9 @@ class Retriever:
         ):
             raise ValueError("An LLM is required for triple filtering and passage reranking")
         if self.config.active_reranker == "compressor" and passage_reranker is None:
-            raise ValueError("reranker='compressor' needs a passage reranker with compress_documents")
+            raise ValueError(
+                "reranker='compressor' needs a passage reranker with compress_documents"
+            )
         self._titles = dict(title_by_source or {})
         self._filter_prompt = triple_filter_prompt
         self._rerank_prompt = passage_rerank_prompt
@@ -140,9 +142,7 @@ class Retriever:
         self._pool = ThreadPoolExecutor(
             max_workers=self.config.workers, thread_name_prefix="raganite-retrieval"
         )
-        self._search_pool = ThreadPoolExecutor(
-            max_workers=3, thread_name_prefix="raganite-search"
-        )
+        self._search_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="raganite-search")
 
     def _title(self, source: str) -> str:
         return self._titles.get(source) or self._titles.get(Path(source).name, Path(source).stem)
@@ -429,7 +429,7 @@ class Retriever:
     def _search_in_parallel(self, query: str, embedding: list[float]) -> dict[str, Any]:
         """Run the chunk, full-text, and fact searches at the same time."""
         cfg = self.config
-        futures = {
+        futures: dict[str, Future[Any]] = {
             "direct": self._search_pool.submit(
                 self.backend.direct_passages, embedding, top_k=cfg.top_k
             )

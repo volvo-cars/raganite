@@ -188,9 +188,7 @@ def _save_locomo_usage(output: Path, indexing_usage: list[dict]) -> None:
     from raganite.clients.llm.usage import combine_usage
 
     question_usage = [
-        row["usage"]
-        for row in read_rows(output).values()
-        if isinstance(row.get("usage"), dict)
+        row["usage"] for row in read_rows(output).values() if isinstance(row.get("usage"), dict)
     ]
     if not indexing_usage and not question_usage:
         return

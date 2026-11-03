@@ -30,12 +30,21 @@ def test_usage_report_sums_indexing_and_questions():
     indexing = {
         "name": "indexing",
         "elapsed_seconds": 2.0,
-        "stages": {"indexing.extract": {**stage, "input_tokens": 10, "output_tokens": 4, "total_tokens": 14}},
+        "stages": {
+            "indexing.extract": {
+                **stage,
+                "input_tokens": 10,
+                "output_tokens": 4,
+                "total_tokens": 14,
+            }
+        },
     }
     questions = {
         "name": "benchmark",
         "elapsed_seconds": 1.0,
-        "stages": {"benchmark.answer": {**stage, "input_tokens": 3, "output_tokens": 1, "total_tokens": 4}},
+        "stages": {
+            "benchmark.answer": {**stage, "input_tokens": 3, "output_tokens": 1, "total_tokens": 4}
+        },
     }
     report = benchmark_usage_report(indexing, questions)
     assert report["total"]["total_tokens"] == 18

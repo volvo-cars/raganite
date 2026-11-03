@@ -217,7 +217,14 @@ def test_query_text_output_prints_only_the_answer(capsys):
     _emit(
         {
             "answer": "Paris",
-            "passages": [{"title": "notes", "source": "paris.txt", "score": 1.0, "text": "Paris is the capital."}],
+            "passages": [
+                {
+                    "title": "notes",
+                    "source": "paris.txt",
+                    "score": 1.0,
+                    "text": "Paris is the capital.",
+                }
+            ],
         },
         "text",
     )
@@ -345,9 +352,7 @@ def test_text_output_names_a_ranking_step_that_ran():
         )
         == "passage rerank: llm"
     )
-    assert (
-        _ranking_note([{"metadata": {"triple_filter_status": "disabled"}}]) is None
-    )
+    assert _ranking_note([{"metadata": {"triple_filter_status": "disabled"}}]) is None
 
 
 def test_query_requires_an_llm():

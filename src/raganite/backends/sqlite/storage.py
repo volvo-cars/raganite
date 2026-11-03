@@ -370,7 +370,14 @@ class _SQLiteStorage(GraphBackend):
                 f"AND (json_extract(properties, '$.relationship_id') IN ({marks}) "
                 f"OR json_extract(properties, '$.relationship_id') NOT IN "
                 f"(SELECT id FROM edges WHERE namespace=?))",
-                (self.namespace, self.topology.next_session, self.namespace, source, *ids, self.namespace),
+                (
+                    self.namespace,
+                    self.topology.next_session,
+                    self.namespace,
+                    source,
+                    *ids,
+                    self.namespace,
+                ),
             )
             if ids:
                 self._connection.execute(

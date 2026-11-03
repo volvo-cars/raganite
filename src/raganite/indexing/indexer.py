@@ -428,7 +428,7 @@ class KnowledgeGraphIndexer:
             )
             node_id = node.id
             name = node.properties.get("name")
-            if kind == "entity" and cfg.perform_entity_resolution and name is not None:
+            if kind == "entity" and cfg.perform_entity_resolution and isinstance(name, str):
                 node_id = resolved_entity_id(self.backend.namespace, node.label, name)
             mapped[node.id] = node_id
             properties: dict[str, Any] = dict(node.properties)
