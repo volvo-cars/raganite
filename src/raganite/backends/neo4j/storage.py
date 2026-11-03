@@ -359,6 +359,66 @@ class _Neo4jStorage(GraphBackend):
         with self._driver.session(database=self.config.database) as session:
             session.execute_write(write)
 
+    def has_sequence(self, source: str) -> bool:
+        rel = quote_identifier(self.topology.next_session)
+        rows = self._read(
+            "OPTIONAL MATCH (a:RaganiteNode {namespace:$namespace, label:'Session', source:$source})"
+            f"-[r:{rel} {{namespace:$namespace}}]->"
+            "(:RaganiteNode {namespace:$namespace, source:$source}) "
+            "WITH r LIMIT 1 "
+            "OPTIONAL MATCH (:RaganiteOwner {namespace:$namespace, source:$source})-[:OWNS_NODE]->"
+            "(f:RaganiteNode {namespace:$namespace, kind:'fact', relation_type:$relation}) "
+            "RETURN r.raganite_id AS edge_id, f.raganite_id AS fact_id LIMIT 1",
+            source=source,
+            relation=self.topology.next_session,
+        )
+        return any(row.get("edge_id") or row.get("fact_id") for row in rows)
+
+    def delete_sequence(self, source: str) -> None:
+        """Remove this source's NEXT edges and the facts that describe them."""
+        self.require_writable()
+        rel = quote_identifier(self.topology.next_session)
+
+        params = {
+            "namespace": self.namespace,
+            "source": source,
+            "relation": self.topology.next_session,
+        }
+
+        def write(tx):
+            tx.run(
+                "MATCH (a:RaganiteNode {namespace:$namespace, label:'Session', source:$source})"
+                f"-[r:{rel} {{namespace:$namespace}}]->"
+                "(:RaganiteNode {namespace:$namespace, source:$source}) "
+                "WITH collect(DISTINCT r) AS rels, collect(DISTINCT r.raganite_id) AS ids "
+                "FOREACH (rel IN rels | DELETE rel) "
+                "WITH ids UNWIND ids AS id "
+                "OPTIONAL MATCH (e:RaganiteEdge {namespace:$namespace, raganite_id:id}) "
+                "DETACH DELETE e "
+                "WITH id "
+                "OPTIONAL MATCH (f:RaganiteNode {namespace:$namespace, kind:'fact', relationship_id:id}) "
+                "DETACH DELETE f",
+                params,
+            ).consume()
+            tx.run(
+                "MATCH (:RaganiteOwner {namespace:$namespace, source:$source})-[:OWNS_EDGE]->"
+                "(e:RaganiteEdge {namespace:$namespace, type:$relation}) "
+                "WHERE NOT EXISTS { MATCH (:RaganiteNode {namespace:$namespace, raganite_id:e.source}) } "
+                "OR NOT EXISTS { MATCH (:RaganiteNode {namespace:$namespace, raganite_id:e.target}) } "
+                "DETACH DELETE e",
+                params,
+            ).consume()
+            tx.run(
+                "MATCH (:RaganiteOwner {namespace:$namespace, source:$source})-[:OWNS_NODE]->"
+                "(f:RaganiteNode {namespace:$namespace, kind:'fact', relation_type:$relation}) "
+                "WHERE NOT EXISTS { MATCH (:RaganiteEdge {namespace:$namespace, raganite_id:f.relationship_id}) } "
+                "DETACH DELETE f",
+                params,
+            ).consume()
+
+        with self._driver.session(database=self.config.database) as session:
+            session.execute_write(write)
+
     def store_shared_nodes(
         self, nodes: Sequence[tuple[GraphNode, Sequence[tuple[str, str]]]]
     ) -> None:

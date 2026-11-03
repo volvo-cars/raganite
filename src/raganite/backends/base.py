@@ -150,6 +150,14 @@ class GraphBackend(ABC):
         """Write nodes owned by every listed document. Each owner is a source and path."""
 
     @abstractmethod
+    def has_sequence(self, source: str) -> bool:
+        """Return whether this source still has a stored session-to-session link."""
+
+    @abstractmethod
+    def delete_sequence(self, source: str) -> None:
+        """Remove this source's session-to-session links and the facts that describe them."""
+
+    @abstractmethod
     def document_hash(self, source: str, path: str) -> str | None:
         """Return the hash of the last successfully committed document."""
 

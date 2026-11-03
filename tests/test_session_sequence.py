@@ -83,6 +83,52 @@ def test_session_links_are_searchable_facts(monkeypatch):
         backend.close()
 
 
+def test_reindexing_replaces_the_old_sequence(monkeypatch):
+    from langchain_core.documents import Document
+
+    backend, indexer = _graph(monkeypatch)
+    first = Document(
+        page_content="Ada left on Monday.",
+        metadata={"path": "session-1.txt", "order": 1, "time": "1:56 pm on 8 May, 2023"},
+    )
+    second = Document(
+        page_content="The group met.",
+        metadata={"path": "session-2.txt", "order": 2, "time": "7:55 pm on 9 June, 2023"},
+    )
+    try:
+        indexer.index_documents([first, second], source="conv-26")
+        moved = Document(
+            page_content="The group met later.",
+            metadata={"path": "session-2.txt", "order": 3, "time": "1:00 pm on 1 July, 2023"},
+        )
+        indexer.index_documents([first, moved], source="conv-26", force=True)
+        linked = [edge for edge in backend.edges() if edge.type == "NEXT"]
+        assert len(linked) == 1
+        assert linked[0].properties["next"] == "1:00 pm on 1 July, 2023"
+        next_facts = [
+            node.properties["text"]
+            for node in backend.nodes(kind="fact")
+            if node.properties.get("relation_type") == "NEXT"
+        ]
+        assert len(next_facts) == 1
+        assert "9 June" not in next_facts[0]
+        assert "1 July" in next_facts[0]
+
+        indexer.index_documents(
+            [Document(page_content="No longer a session.", metadata={"path": "session-1.txt"})],
+            source="conv-26",
+            force=True,
+        )
+        assert [edge for edge in backend.edges() if edge.type == "NEXT"] == []
+        assert [
+            node
+            for node in backend.nodes(kind="fact")
+            if node.properties.get("relation_type") == "NEXT"
+        ] == []
+    finally:
+        backend.close()
+
+
 def test_ordered_sessions_stay_linked_for_the_walk(monkeypatch):
     from langchain_core.documents import Document
 

@@ -14,6 +14,8 @@ from benchmark.fetch import LOCOMO_URL, ensure_download
 from benchmark.hotpotqa_flow import RateLimitPause, _clients, _rate_limited, load_benchmark_env
 from benchmark.locomo import selected_samples, session_documents
 from benchmark.locomo_prompt import judge_label, judge_prompt, paper_prompt
+from benchmark.metrics import benchmark_usage_report
+from benchmark.results import read_rows, save
 from benchmark.store import maybe_index, store_config
 
 logger = logging.getLogger(__name__)
@@ -181,6 +183,26 @@ async def _answer_one(
         raise
 
 
+def _save_locomo_usage(output: Path, indexing_usage: list[dict]) -> None:
+    """Write indexing usage, question usage, and their sum beside the answers."""
+    from raganite.clients.llm.usage import combine_usage
+
+    question_usage = [
+        row["usage"]
+        for row in read_rows(output).values()
+        if isinstance(row.get("usage"), dict)
+    ]
+    if not indexing_usage and not question_usage:
+        return
+    save(
+        output.with_suffix(".usage.json"),
+        benchmark_usage_report(
+            combine_usage(indexing_usage) if indexing_usage else None,
+            combine_usage(question_usage) if question_usage else None,
+        ),
+    )
+
+
 def _close_http(http_clients) -> None:
     for client in http_clients:
         closer = getattr(client, "close", None)
@@ -224,6 +246,7 @@ def _run_locomo_conversations(options, chosen, dimensions) -> None:
     )
     output = Path(options["output"])
     output.parent.mkdir(parents=True, exist_ok=True)
+    indexing_usage: list[dict] = []
     done: set[str] = set()
     if output.exists():
         for line in output.read_text(encoding="utf-8").splitlines():
@@ -276,6 +299,7 @@ def _run_locomo_conversations(options, chosen, dimensions) -> None:
                 )
                 time.sleep(30)
             if report is not None:
+                indexing_usage.append(asdict(report.usage))
                 print(
                     f"Indexed {namespace}: {len(report.indexed_files)} sessions, "
                     f"{len(report.skipped_files)} unchanged, "
@@ -308,3 +332,4 @@ def _run_locomo_conversations(options, chosen, dimensions) -> None:
                 retriever.close()
             graph.close()
             _close_http(http_clients)
+    _save_locomo_usage(output, indexing_usage)

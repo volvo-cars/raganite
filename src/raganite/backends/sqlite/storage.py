@@ -295,6 +295,62 @@ class _SQLiteStorage(GraphBackend):
                     [(self.namespace, source, path, node.id) for source, path in owners],
                 )
 
+    def _sequence_edge_ids(self, source: str) -> list[str]:
+        rows = self._connection.execute(
+            """
+            SELECT e.id FROM edges e
+            JOIN nodes a ON a.namespace=e.namespace AND a.id=e.source
+            JOIN nodes b ON b.namespace=e.namespace AND b.id=e.target
+            WHERE e.namespace=? AND e.type=?
+              AND a.label='Session' AND b.label='Session'
+              AND json_extract(a.properties, '$.source')=?
+              AND json_extract(b.properties, '$.source')=?
+            """,
+            (self.namespace, self.topology.next_session, source, source),
+        ).fetchall()
+        return [row["id"] for row in rows]
+
+    def has_sequence(self, source: str) -> bool:
+        with self._lock, self._connection:
+            if self._sequence_edge_ids(source):
+                return True
+            row = self._connection.execute(
+                """
+                SELECT 1 FROM nodes
+                JOIN document_nodes owners
+                  ON owners.namespace=nodes.namespace AND owners.node_id=nodes.id
+                WHERE nodes.namespace=? AND nodes.kind='fact'
+                  AND owners.source=?
+                  AND json_extract(nodes.properties, '$.relation_type')=?
+                LIMIT 1
+                """,
+                (self.namespace, source, self.topology.next_session),
+            ).fetchone()
+            return row is not None
+
+    def delete_sequence(self, source: str) -> None:
+        """Remove this source's NEXT edges and the facts that describe them."""
+        self.require_writable()
+        with self._lock, self._connection:
+            ids = self._sequence_edge_ids(source)
+            marks = ",".join("?" * len(ids)) if ids else "NULL"
+            self._connection.execute(
+                f"DELETE FROM nodes WHERE namespace=? AND kind='fact' "
+                f"AND json_extract(properties, '$.relation_type')=? "
+                f"AND id IN (SELECT node_id FROM document_nodes WHERE namespace=? AND source=?) "
+                f"AND (json_extract(properties, '$.relationship_id') IN ({marks}) "
+                f"OR json_extract(properties, '$.relationship_id') NOT IN "
+                f"(SELECT id FROM edges WHERE namespace=?))",
+                (self.namespace, self.topology.next_session, self.namespace, source, *ids, self.namespace),
+            )
+            if ids:
+                self._connection.execute(
+                    f"DELETE FROM edges WHERE namespace=? AND id IN ({marks})",
+                    (self.namespace, *ids),
+                )
+            self._cleanup()
+            self._refresh_degrees()
+
     def _refresh_degrees(self) -> None:
         """Store each entity's neighbor count so retrieval does not scan edges per step."""
         self._connection.execute(

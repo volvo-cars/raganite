@@ -207,14 +207,23 @@ def _redact(value: Any) -> Any:
     return value
 
 
+_QUOTED_OR_TOKEN = r'(?:"[^"]*"|\'[^\']*\'|\S+)'
 _SECRET = re.compile(
-    r"(?i)(?:api[_-]?key|authorization|bearer|token)\s*[:=]\s*\S+|sk-[A-Za-z0-9_\-]{8,}"
+    rf"(?i)(?:[\"']?(?:api[_-]?key|authorization|bearer|token)[\"']?\s*[:=]\s*"
+    rf"(?:bearer\s+{_QUOTED_OR_TOKEN}|{_QUOTED_OR_TOKEN}))"
+    rf"|(?:bearer\s+{_QUOTED_OR_TOKEN})"
+    rf"|sk-[A-Za-z0-9_\-]{{8,}}"
 )
+
+
+def redacted_error(reason: str) -> str:
+    """Failure text with credentials removed on every line."""
+    return _SECRET.sub("********", reason)
 
 
 def public_error(reason: str) -> str:
     """First line of a failure, with credentials removed and the line shortened."""
-    line = _SECRET.sub("********", reason.splitlines()[0].strip()) if reason.strip() else ""
+    line = redacted_error(reason).splitlines()[0].strip() if reason.strip() else ""
     if len(line) > 180:
         line = line[:177] + "..."
     return line or "indexing_failed"
@@ -317,7 +326,7 @@ def _execute(args: SimpleNamespace, config: Any) -> int:
     # Provider error messages can include request payloads or credentials.
     if getattr(args, "verbose", 0) >= 2:
         payload["failed_files"] = [
-            {"path": path, "error": reason} for path, reason in report.failed_files
+            {"path": path, "error": redacted_error(reason)} for path, reason in report.failed_files
         ]
     else:
         payload["failed_files"] = [

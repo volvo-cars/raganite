@@ -582,11 +582,13 @@ class KnowledgeGraphIndexer:
                     report.skipped_files.append((path, reason))
                 else:
                     report.failed_files.append((path, reason))
-        if any(sequence_position(document.metadata) is not None for document in documents):
+        ordered = any(sequence_position(document.metadata) is not None for document in documents)
+        if ordered or await asyncio.to_thread(self.backend.has_sequence, source):
             await self._link_sequence(source)
         return report
 
     async def _link_sequence(self, source: str) -> None:
+        await asyncio.to_thread(self.backend.delete_sequence, source)
         stored = await asyncio.to_thread(self.backend.nodes, kind="entity")
         by_id = {node.id: node for node in stored}
         shared = sequence_edges(

@@ -15,7 +15,7 @@ uv sync
 cp .env.example .env
 ```
 
-Set `OPENAI_API_KEY` in `.env`. Do not commit `.env`. The CLI reads that file from the repository root. The defaults use SQLite at `.raganite/graph.sqlite3`, the namespace `default`, and 1536-dimension embeddings.
+Set `OPENAI_API_KEY` in `.env`. Do not commit `.env`. The CLI reads that file from the current working directory. The defaults use SQLite at `.raganite/graph.sqlite3`, the namespace `default`, and 1536-dimension embeddings.
 
 ```sh
 mkdir -p documents

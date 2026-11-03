@@ -51,6 +51,17 @@ def test_a_normal_index_error_keeps_the_first_line_and_hides_a_key():
     assert public_error(reason) == "RateLimitError: slow down"
     leaked = "request failed api_key=sk-abcdefghijklmnopqrstuvwxyz"
     assert "sk-" not in public_error(leaked)
+    quoted = 'HTTP 401 {"authorization": "Bearer super-secret-token"}'
+    assert "super-secret-token" not in public_error(quoted)
+    header = 'upstream said Authorization: Bearer "super secret token"'
+    assert "super secret token" not in public_error(header)
+    from raganite.cli import redacted_error
+
+    detail = 'first line\n{"authorization": "Bearer super-secret-token"}\nstill here'
+    cleaned = redacted_error(detail)
+    assert "super-secret-token" not in cleaned
+    assert cleaned.startswith("first line\n")
+    assert cleaned.endswith("still here")
     assert public_error("x" * 200).endswith("...")
     assert len(public_error("x" * 200)) == 180
 
