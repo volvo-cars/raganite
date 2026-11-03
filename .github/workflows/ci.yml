@@ -33,7 +33,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install development dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --extra rerank
       - name: Lint source, benchmark harness, and tests
         run: uv run ruff check src
       - name: Type-check against the minimum supported Python
