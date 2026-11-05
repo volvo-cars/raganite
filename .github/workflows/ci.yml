@@ -5,6 +5,12 @@ on:
   merge_group:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      ref:
+        description: Commit or ref to test. Empty uses the event SHA.
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -27,6 +33,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
         with:
+          ref: ${{ (inputs.ref != '' && inputs.ref) || github.sha }}
           persist-credentials: false
       - name: Set up dependencies
         uses: ./.github/actions/setup-python
@@ -53,6 +60,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
         with:
+          ref: ${{ (inputs.ref != '' && inputs.ref) || github.sha }}
           persist-credentials: false
       - name: Set up dependencies
         uses: ./.github/actions/setup-python

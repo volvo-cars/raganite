@@ -292,7 +292,7 @@ different retrieval mode or by silently excluding failed questions.
 ## 11. Understand CI and respond to review
 
 The `CI` workflow runs on pull requests, merge-queue events, and manual dispatch.
-It is also reused by the post-merge packaging workflow.
+It is also reused as the pre-release checks in the packaging workflow.
 
 | Job | What it does |
 | --- | --- |
@@ -368,65 +368,54 @@ asks. Prepare a focused release PR when the scope/version is agreed:
    an older cached tool, keeping validation compatible with newer build metadata.
 7. Commit the version, lockfile, generated notes, and consumed-fragment deletions
    in the release PR. Mark the PR as a release in the changelog exemption.
-8. Merge through the normal checks/reviews and verify the resulting package
-   artifacts. A normal `main` push builds packages but never publishes them.
-   Create the release through one of the approved routes below. A tag push
-   alone does not publish a package.
+8. Merge through the normal checks/reviews. A push to `main` builds the package
+   and runs the same checks, but it does not publish. A tag push alone does not
+   publish either. Create the release from the GitHub Releases page, as below.
+
+### One-time PyPI trusted publisher
+
+Before the first release, a maintainer configures PyPI Trusted Publishing.
+The publish job has no PyPI password or token.
+
+1. On PyPI, add a **pending publisher** for the project name `raganite` (the
+   project does not need to exist yet):
+   - Owner: `volvo-cars`
+   - Repository: `raganite`
+   - Workflow name: `package.yml`
+   - Environment name: `package-publish`
+2. In the GitHub repository, open **Settings → Environments → package-publish**.
+   Add required reviewers if a person must approve each upload. Allow deployment
+   tags matching `v*`, because the publish job runs on the release tag.
+   Referencing the environment in the workflow does not itself require a review.
 
 ### Create a GitHub Release
 
-After the release PR has merged, open **Actions → Package → Run workflow**:
+After the release PR has merged, open **Releases → Draft a new release**, then
+publish it. GitHub does not start Actions while a release is still a draft.
 
-1. Select the `main` branch.
-2. Set `create_release` to true. Leaving it false runs CI/build only.
-3. Run the workflow and review the CI/build results.
-4. Approve the `github-release` environment deployment when prompted.
+1. Choose or create tag `v<project.version>` on the `main` commit to release.
+   The tag must match `project.version` in `pyproject.toml`, and the version
+   must be stable `X.Y.Z` (for the first release, `v0.1.0`).
+2. Set the title and notes. Do not mark the release as a pre-release.
+3. Publish the release.
 
-The release-creation job creates `v<project.version>` at the exact tested commit,
-generates GitHub release notes, and attaches the validated distributions. It does
-not bump versions, generate Towncrier notes, or open a release PR; those changes
-must already be committed. Existing conflicting tags/releases are not overwritten.
-Only stable versions in `X.Y.Z` form are supported by this workflow.
+Publishing starts the Package workflow on that tag. The pre-release checks are
+the CI workflow again: Ruff, mypy, ty, and pytest on Python 3.11, 3.12, and
+3.13. The workflow then builds the wheel and sdist and runs
+`twine check --strict`.
 
-Alternatively, publish a non-draft, non-prerelease GitHub Release through the
-GitHub UI or API. Its tag must be `v<project.version>`, and its commit must already
-belong to `main`. Publishing that release triggers source validation, CI, and a
-package build for the tagged commit before considering registry publication.
+PyPI upload runs only after those checks and the build succeed. The same job
+attaches the distributions to the GitHub Release. If a check fails, nothing is
+uploaded. Delete the GitHub Release or fix `main` and publish a new tag after
+correcting the failure. Re-running the workflow repeats the checks against the
+same tag.
 
-### Registry publication and approvals
+Pre-releases are rejected. Pushes to `main` and **Actions → Package → Run
+workflow** rebuild and retest only. They do not create a release or upload to
+PyPI. The workflow does not bump the version or edit `CHANGELOG.md`.
 
-Registry publication still requires all of the following:
-
-- A published stable GitHub Release, or a successful explicitly requested
-  release-creation job in the same workflow run.
-- Successful source validation, CI, and package build.
-- Repository variable `ENABLE_PACKAGE_PUBLISH` set to the literal string `true`.
-- Approval for the `package-publish` environment, when its protection rules require it.
-- A PyPI `PACKAGE_PUBLISH_TOKEN` secret or the `PACKAGE_PUBLISH_USERNAME` /
-  `PACKAGE_PUBLISH_PASSWORD` secret pair.
-
-Dependencies use the official PyPI Simple index at `https://pypi.org/simple`.
-Publication uses PyPI's upload endpoint at `https://upload.pypi.org/legacy/`;
-no custom registry URL is configured.
-
-**Before enabling publication**, administrators must configure required reviewers
-for the `github-release` and `package-publish` environments under **Settings →
-Environments**. Referencing an environment in YAML does not itself enforce human
-approval; without protection rules a job can proceed without a review. Configure
-branch/tag restrictions and disable self-approval where appropriate. Custom
-runners must also provide Git, Bash, and the GitHub CLI (`gh`) for release creation.
-
-Leave `ENABLE_PACKAGE_PUBLISH` unset or false to create GitHub Releases and build
-artifacts without uploading to a package registry. Ordinary `main` pushes and
-build-only manual runs cannot publish, even when that variable is true.
-
-The workflow's default token permission remains `contents: read`. Only the
-release-creation job receives `contents: write` for tags/releases; build, test,
-and registry-publishing jobs do not. No job creates release PRs, so none receives
-`pull-requests: write`. If release-PR automation is added later, grant that
-permission only to its dedicated job, along with the contents access it needs.
-
-Releases created using the workflow's `GITHUB_TOKEN` do not start another release
-event workflow. The approved creation route therefore continues to the gated
-publishing job in the same run. Registry uploads reuse that run's validated
-distributions and deliberately fail on duplicate versions.
+The publish job requests an OIDC token for PyPI (`id-token: write`) and
+`contents: write` so it can attach the built files. It does not check out the
+repository; it uploads the build from the earlier job. No job requests
+`pull-requests: write`. The workflow file must already be on `main` before the
+release is published.

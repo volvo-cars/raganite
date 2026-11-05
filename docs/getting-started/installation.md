@@ -35,6 +35,19 @@ Hugging Face chat and embeddings are optional. `uv sync --extra huggingface` add
 
 Model calls need an OpenAI or Azure OpenAI key. The next lesson sets that up. `init`, `config`, and `clear` do not call a model.
 
+## Install a published release
+
+GitHub Releases are uploaded to PyPI after the pre-release checks pass.
+From a project that already uses uv:
+
+```sh
+uv add raganite
+```
+
+Optional providers are extras: `raganite[huggingface]`, `raganite[ollama]`, and
+`raganite[rerank]`. The lessons on this site clone the repository so the docs
+and example files are in the working tree.
+
 ## See also
 
 - [Your first index](quickstart.md) continues from here.

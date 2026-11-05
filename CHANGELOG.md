@@ -3,7 +3,7 @@
 Notable changes to Raganite are recorded here. Entries are grouped by change
 type; the release date is added when a version is published.
 
-## [0.1.0] - 2026-11-05
+## [0.1.0] - [Unreleased]
 
 ### Added
 

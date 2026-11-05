@@ -4,20 +4,16 @@ on:
   push:
     branches: [main]
   release:
+    # GitHub does not run workflows for draft releases. Publishing the release
+    # starts pre-release checks, then the PyPI upload.
     types: [published]
   workflow_dispatch:
-    inputs:
-      create_release:
-        description: Create a GitHub Release for the version already committed on main (requires release-environment approval).
-        type: boolean
-        required: false
-        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: package-${{ github.ref }}
+  group: package-${{ github.event.release.id || github.ref }}
   # Never interrupt an in-progress upload when another merge arrives.
   cancel-in-progress: false
 
@@ -25,9 +21,10 @@ jobs:
   source:
     name: Validate release source
     if: >-
-      (github.event_name != 'release' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'release' &&
-       github.event.release.draft == false && github.event.release.prerelease == false)
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'release' && github.event.action == 'published' &&
+       github.event.release.draft == false)
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     outputs:
@@ -37,6 +34,7 @@ jobs:
       - name: Check out the exact build source
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Python
@@ -48,12 +46,10 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-          CREATE_RELEASE: ${{ inputs.create_release }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
         shell: bash
         run: |
           set -euo pipefail
-          # A release must refer to code already committed on main.
-          git merge-base --is-ancestor HEAD origin/main
           python - <<'PY'
           import os
           import re
@@ -61,30 +57,44 @@ jobs:
           import tomllib
           from pathlib import Path
 
-          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          event = os.environ["EVENT_NAME"]
           sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-          is_release = os.environ["EVENT_NAME"] == "release"
-          creating = os.environ["CREATE_RELEASE"] == "true"
-          if is_release or creating:
+          if event == "release":
+              if os.environ["PRERELEASE"] == "true":
+                  raise SystemExit("Pre-releases are not published. Publish a stable release.")
+              tag = os.environ["RELEASE_TAG"]
+              tagged = subprocess.check_output(
+                  ["git", "rev-parse", f"refs/tags/{tag}^{{commit}}"],
+                  text=True,
+              ).strip()
+              if tagged != sha:
+                  raise SystemExit("Checkout must be the tagged release commit")
+
+          ancestor = subprocess.run(
+              ["git", "merge-base", "--is-ancestor", sha, "origin/main"],
+          )
+          if ancestor.returncode != 0:
+              raise SystemExit("Release commit must already be on main")
+
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          if event == "release":
               if not re.fullmatch(r"\d+\.\d+\.\d+", version):
                   raise SystemExit("Only stable X.Y.Z versions can be released by this workflow")
-              tag = f"v{version}"
-              if is_release and os.environ["RELEASE_TAG"] != tag:
-                  raise SystemExit("Release tag must match v<project.version>")
-              existing = subprocess.run(
-                  ["git", "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}"],
-                  capture_output=True, text=True,
-              )
-              if existing.returncode == 0 and existing.stdout.strip() != sha:
-                  raise SystemExit("Release tag already points to a different commit")
+              tag = os.environ["RELEASE_TAG"]
+              if tag != f"v{version}":
+                  raise SystemExit(
+                      f"Release tag must be v{version} to match project.version (got {tag})"
+                  )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"version={version}\nsha={sha}\n")
           PY
 
   checks:
-    name: Package checks
+    name: Pre-release checks
     needs: source
     uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.source.outputs.sha }}
 
   build:
     name: Build distribution
@@ -98,6 +108,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.source.outputs.sha }}
           persist-credentials: false
       - name: Set up dependencies
         uses: ./.github/actions/setup-python
@@ -126,80 +137,41 @@ jobs:
         id: artifact
         uses: actions/upload-artifact@v4
         with:
-          name: raganite-${{ steps.metadata.outputs.version }}-${{ github.sha }}
+          name: raganite-${{ steps.metadata.outputs.version }}-${{ needs.source.outputs.sha }}
           path: |
             dist/*.whl
             dist/*.tar.gz
           if-no-files-found: error
           retention-days: 30
       - name: Record deployment status
+        if: github.event_name != 'release'
         env:
           PACKAGE_VERSION: ${{ steps.metadata.outputs.version }}
-          PUBLISH_ENABLED: ${{ vars.ENABLE_PACKAGE_PUBLISH }}
         shell: bash
         run: |
           {
             echo "## Package build"
             echo "Version: $PACKAGE_VERSION"
             echo "Wheel and source distribution are available as workflow artifacts."
-            echo "Main pushes and build-only manual runs never publish packages."
-            if [[ "$PUBLISH_ENABLED" != true ]]; then
-              echo "Publishing is disabled (ENABLE_PACKAGE_PUBLISH is not true)."
-            else
-              echo "Publishing is enabled for approved releases only; see the release/publish jobs."
-            fi
+            echo "Pushes to main and manual runs build only. They do not publish."
+            echo "Publishing a GitHub Release runs these checks again, then uploads to PyPI."
           } >> "$GITHUB_STEP_SUMMARY"
-  # Protect this environment with required reviewers in repository settings.
-  # Only this job may create tags/releases; no release PRs are created here,
-  # so pull-requests: write is intentionally not granted.
-  create-release:
-    name: Create approved GitHub Release
-    needs: [source, build]
-    if: github.event_name == 'workflow_dispatch' && inputs.create_release == true
-    permissions:
-      contents: write
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 10
-    environment: github-release
-    steps:
-      - name: Download the validated distributions
-        uses: actions/download-artifact@v4
-        with:
-          artifact-ids: ${{ needs.build.outputs.artifact-id }}
-          path: dist
-          merge-multiple: true
-      - name: Create the version tag and GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_VERSION: ${{ needs.source.outputs.version }}
-          RELEASE_SHA: ${{ needs.source.outputs.sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh release create "v${RELEASE_VERSION}" dist/* \
-            --target "$RELEASE_SHA" \
-            --title "Raganite ${RELEASE_VERSION}" \
-            --generate-notes
 
-  # Keep ENABLE_PACKAGE_PUBLISH unset/false until PyPI deployment is wanted.
-  # GITHUB_TOKEN-created releases do not trigger another release workflow run,
-  # so an approved creation above continues to publish within this same run.
-  # UI/API-published releases run source validation, CI and a fresh build first.
-  # Protect package-publish with required reviewers to approve each PyPI upload.
+  # Trusted publishing: no PyPI token is stored in GitHub.
+  # Configure a PyPI pending publisher for workflow package.yml
+  # and environment package-publish before the first release.
+  # This job does not check out the repository.
   publish:
-    name: Publish approved release (opt-in)
-    needs: [build, create-release]
-    if: >-
-      always() && !cancelled() && needs.build.result == 'success' &&
-      vars.ENABLE_PACKAGE_PUBLISH == 'true' &&
-      ((github.event_name == 'release' && github.event.action == 'published' &&
-        github.event.release.draft == false && github.event.release.prerelease == false) ||
-       (github.event_name == 'workflow_dispatch' && inputs.create_release == true &&
-        needs.create-release.result == 'success'))
+    name: Publish to PyPI
+    needs: [source, build]
+    if: github.event_name == 'release' && needs.build.result == 'success'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     environment: package-publish
+    permissions:
+      id-token: write
+      contents: write
+      actions: read
     steps:
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -207,30 +179,27 @@ jobs:
           python-version: "3.13"
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.27"
       - name: Download the validated build from this run
         uses: actions/download-artifact@v4
         with:
           artifact-ids: ${{ needs.build.outputs.artifact-id }}
           path: dist
           merge-multiple: true
-      - name: Publish to official PyPI
+      - name: Publish to PyPI and attach the distributions
         env:
-          PUBLISH_TOKEN: ${{ secrets.PACKAGE_PUBLISH_TOKEN }}
-          PUBLISH_USERNAME: ${{ secrets.PACKAGE_PUBLISH_USERNAME }}
-          PUBLISH_PASSWORD: ${{ secrets.PACKAGE_PUBLISH_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_SHA: ${{ needs.source.outputs.sha }}
           UV_NO_PROGRESS: "1"
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -n "$PUBLISH_TOKEN" ]]; then
-            export UV_PUBLISH_TOKEN="$PUBLISH_TOKEN"
-          elif [[ -n "$PUBLISH_USERNAME" && -n "$PUBLISH_PASSWORD" ]]; then
-            export UV_PUBLISH_USERNAME="$PUBLISH_USERNAME"
-            export UV_PUBLISH_PASSWORD="$PUBLISH_PASSWORD"
-          else
-            echo "::error::Configure a publish token or a publish username/password pair."
-            exit 1
-          fi
-          # No checkout or repository code runs in this credential-bearing job.
-          # Do not silently skip duplicate versions or mark failed uploads green.
           uv publish --publish-url https://upload.pypi.org/legacy/ dist/*
+          gh release upload "$RELEASE_TAG" dist/* --clobber
+          {
+            echo "## Published"
+            echo "PyPI package for $RELEASE_TAG is uploaded from the checked commit $RELEASE_SHA."
+          } >> "$GITHUB_STEP_SUMMARY"

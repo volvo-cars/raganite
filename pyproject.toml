@@ -37,6 +37,13 @@ rerank = [
 raganite = "raganite.cli:main"
 raganite-bench = "benchmark.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/volvo-cars/raganite"
+Documentation = "https://github.com/volvo-cars/raganite/tree/main/docs"
+Changelog = "https://github.com/volvo-cars/raganite/blob/main/CHANGELOG.md"
+Issues = "https://github.com/volvo-cars/raganite/issues"
+Source = "https://github.com/volvo-cars/raganite"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
