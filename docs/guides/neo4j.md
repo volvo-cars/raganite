@@ -62,7 +62,9 @@ backend = Neo4jBackend(
 
 `layout="native"` forces read-only, even if the config says otherwise. Writes raise `PermissionError`. Use a dedicated database.
 
-Retrieval discovers the chunk label from the vector index, then the semantic connector and the document connector by how often each pair appears. The most frequent pair is kept. Labels that only repeat the same endpoints, such as `RaganiteNode` with `__Entity__` or `Document`, stay one connector. If two connector types share that count, or two domain labels do, retrieval raises `ValueError` and names both.
+Default beam retrieval reads passages with stored vectors using the node label and vector property declared by `vector_index`. The index must cover one label and one property. Native snapshots do not use Raganite's owned-document provenance.
+
+For direct search, Raganite discovers the semantic and document connectors by how often each pair appears. The most frequent pair is kept. Labels that only repeat the same endpoints, such as `RaganiteNode` with `__Entity__` or `Document`, stay one connector. If two connector types share that count, or two domain labels do, discovery raises `ValueError` and names both.
 
 Pass an injected `driver` if you already have a Neo4j driver. Raganite closes a driver it created. It leaves an injected driver open.
 

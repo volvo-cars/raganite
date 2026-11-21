@@ -143,11 +143,15 @@ class Retriever(RetrievalBase):
 
     def _loaded_beam(self) -> tuple[FactWalkGraph, LiveBeamPolicy] | None:
         graph = self._loaded_fact_graph()
+        if graph is None:
+            return None
         cached = self._beam_snapshot
         if cached is not None and cached[0] is graph:
             return cached
         with self._beam_lock:
             graph = self._loaded_fact_graph()
+            if graph is None:
+                return None
             cached = self._beam_snapshot
             if cached is not None and cached[0] is graph:
                 return cached
@@ -155,8 +159,12 @@ class Retriever(RetrievalBase):
                 return None
             ids = list(graph.chunk_by_id)
             vectors: dict[str, Sequence[float]] = {}
-            for start in range(0, len(ids), 200):
-                vectors.update(self.backend.chunk_embeddings(ids[start : start + 200]))
+            try:
+                for start in range(0, len(ids), 200):
+                    vectors.update(self.backend.chunk_embeddings(ids[start : start + 200]))
+            except NotImplementedError as exc:
+                logger.info("Backend does not provide snapshot embeddings: %s", exc)
+                return None
             if not vectors:
                 return None
             policy = LiveBeamPolicy(

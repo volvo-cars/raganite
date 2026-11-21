@@ -249,11 +249,14 @@ class GraphBackend(ABC):
         return rows
 
     def fact_edges(self) -> list[FactEdge]:
-        """Return every embedded fact and its two endpoints, ordered by relationship ID in owned graphs."""
+        """Return embedded facts and endpoints, ordered by relationship ID in owned graphs.
+
+        Optional for direct-search backends. Return an empty list if the snapshot has no facts.
+        """
         raise NotImplementedError("This backend does not provide fact edges")
 
     def chunk_records(self) -> list[ChunkRecord]:
-        """Return chunks with their title and document-owned entities, ordered by chunk ID in owned graphs."""
+        """Return chunk snapshot records; optional for direct-search backends."""
         raise NotImplementedError("This backend does not provide chunk records")
 
     def chunk_embeddings(self, chunk_ids: Sequence[str]) -> dict[str, tuple[float, ...]]:

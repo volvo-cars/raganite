@@ -1,13 +1,37 @@
+from unittest.mock import Mock
+
 import numpy as np
 import pytest
 
-from raganite.backends.base import DocumentGraph, GraphNode
+from raganite.backends.base import DocumentGraph, GraphBackend, GraphNode
+from raganite.backends.models import ChunkRecord, PassageHit
 from raganite.backends.sqlite import SQLiteBackend
 from raganite.config import RaganiteConfig, SQLiteConfig
 from raganite.graph import KnowledgeGraph
 from raganite.retrieval import BeamRetriever
 from raganite.retrieval.beam.policy import load_checkpoint
 from raganite.retrieval.beam.retriever import LiveBeamPolicy
+
+
+@pytest.mark.parametrize("missing", ["fact_edges", "chunk_records", "chunk_embeddings"])
+def test_default_retrieval_supports_backends_without_a_complete_snapshot(missing):
+    backend = Mock(spec=GraphBackend)
+    backend.graph_generation = 0
+    backend.fact_edges.return_value = []
+    backend.chunk_records.return_value = [ChunkRecord("one", "one.txt", "Pump")]
+    backend.chunk_embeddings.return_value = {"one": (1.0, 0.0)}
+    getattr(backend, missing).side_effect = getattr(GraphBackend, missing).__get__(backend)
+    backend.direct_passages.return_value = [PassageHit("one", "one.txt", "Pump", 1.0)]
+    backend.lexical_passages.return_value = []
+    embeddings = Mock()
+    embeddings.embed_query.return_value = [1.0, 0.0]
+    retriever = BeamRetriever(backend, embeddings)
+    try:
+        assert [passage.text for passage in retriever.retrieve("Which pump?")] == ["Pump"]
+        backend.direct_passages.assert_called_once()
+        embeddings.embed_query.assert_called_once_with("Which pump?")
+    finally:
+        retriever.close()
 
 
 def test_live_passage_matrix_is_normalized_and_title_aligned():

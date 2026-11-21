@@ -190,7 +190,7 @@ class RetrievalBase:
             logger.debug("Passage rerank failed", exc_info=True)
             return passages, "request_error_fallback"
 
-    def _loaded_fact_graph(self) -> FactWalkGraph:
+    def _loaded_fact_graph(self) -> FactWalkGraph | None:
         """Read facts and chunks once. Later questions share that matrix."""
         generation = self.backend.graph_generation
         cached = self._fact_graph
@@ -212,8 +212,12 @@ class RetrievalBase:
                 )
                 return cached[1]
             started = time.perf_counter()
-            edges = self.backend.fact_edges()
-            chunks = self.backend.chunk_records()
+            try:
+                edges = self.backend.fact_edges()
+                chunks = self.backend.chunk_records()
+            except NotImplementedError as exc:
+                logger.info("Backend does not provide a beam snapshot: %s", exc)
+                return None
             graph = FactWalkGraph.from_edges(edges, chunks)
             logger.info(
                 "Loaded %s fact edges and %s chunks in %.1fs",

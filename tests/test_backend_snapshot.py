@@ -1,8 +1,9 @@
-"""Owned-backend contract. Set RAGANITE_TEST_DOCKER_NEO4J=1 to include Neo4j 5.26."""
+"""Backend snapshots. Set RAGANITE_TEST_DOCKER_NEO4J=1 to include Neo4j 5.26."""
 
 import os
 import subprocess
 import time
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -15,6 +16,7 @@ from raganite.backends.models import ChunkRecord, FactEdge
 from raganite.backends.neo4j import Neo4jBackend
 from raganite.backends.sqlite import SQLiteBackend
 from raganite.config import Neo4jConfig, SQLiteConfig
+from raganite.retrieval import Retriever
 from raganite.retrieval.fact_walk.graph import FactWalkGraph
 
 VECTOR = (0.12345678901234567, -0.9876543210987654)
@@ -85,6 +87,40 @@ def _graph(path, nodes, edges=(), *, content_hash="v1", source="corpus"):
     return DocumentGraph(
         source=source, path=path, content_hash=content_hash, nodes=nodes, edges=edges
     )
+
+
+def test_native_snapshot_uses_index_label_and_vector_property(disposable_neo4j):
+    config = disposable_neo4j.model_copy(update={"vector_index": "native_passages"})
+    with GraphDatabase.driver(
+        config.uri, auth=(config.username, config.password.get_secret_value())
+    ) as driver:
+        driver.execute_query(
+            "CREATE (a:Article {content:'Pump manual', path:'manual.txt', semanticVector:$vector}), "
+            "(b:Article {text:'Pump biography', path:'bio.txt', semanticVector:$vector}), "
+            "(:Article {text:'Not embedded'}), "
+            "(:Distractor {text:'Wrong label', semanticVector:$vector})",
+            vector=list(VECTOR),
+        )
+        driver.execute_query(
+            "CREATE VECTOR INDEX native_passages FOR (n:Article) ON (n.semanticVector) "
+            "OPTIONS {indexConfig:{`vector.dimensions`:2, `vector.similarity_function`:'cosine'}}"
+        )
+        driver.execute_query("CALL db.awaitIndex('native_passages')")
+        with Neo4jBackend(config, driver=driver, dimensions=2, layout="native") as store:
+            chunks = store.chunk_records()
+            assert {chunk.path for chunk in chunks} == {"manual.txt", "bio.txt"}
+            assert store.chunk_embeddings([*(chunk.chunk_id for chunk in chunks), "missing"]) == {
+                chunk.chunk_id: VECTOR for chunk in chunks
+            }
+            embeddings = Mock()
+            embeddings.embed_query.return_value = list(VECTOR)
+            retriever = Retriever(store, embeddings)
+            try:
+                result = retriever.retrieve("Which pump?")
+                assert {passage.source for passage in result} == {"manual.txt", "bio.txt"}
+                assert all(passage.metadata["beam_candidate_count"] == 2 for passage in result)
+            finally:
+                retriever.close()
 
 
 def test_owned_snapshot_preserves_records_provenance_and_precision(backend):

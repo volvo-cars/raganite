@@ -55,6 +55,8 @@ config = RaganiteConfig(
 
 `use_triples=False` skips the beam and uses direct chunk search. `use_fulltext=False` skips the additional full-text list in direct search. `query` still needs a chat model.
 
+Custom backends that do not implement beam snapshots fall back to direct chunk search. To support the beam, implement `fact_edges()`, `chunk_records()`, and `chunk_embeddings()`.
+
 ## Titles
 
 `KnowledgeGraph.retrieve` titles a passage from the stored path. Construct `Retriever` yourself when a path should display as a different title:

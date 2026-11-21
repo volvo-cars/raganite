@@ -16,6 +16,7 @@
 """Neo4j passage search and beam snapshots."""
 
 from collections.abc import Sequence
+from functools import cached_property
 
 from ..base import validate_vector
 from ..models import ChunkRecord, FactEdge, PassageHit
@@ -43,6 +44,22 @@ class Neo4jBackend(_Neo4jStorage):
         if self._traversal_schema is None:
             self._traversal_schema = discover(self)
         return self._traversal_schema
+
+    @cached_property
+    def _native_chunk_index(self) -> tuple[str, str]:
+        rows = self._read(
+            "SHOW VECTOR INDEXES YIELD name, entityType, labelsOrTypes, properties "
+            "WHERE name=$name AND entityType='NODE' RETURN labelsOrTypes, properties",
+            name=self._lookup_index(self.config.vector_index),
+        )
+        if rows:
+            labels = rows[0]["labelsOrTypes"] or []
+            properties = rows[0]["properties"] or []
+            if len(labels) == len(properties) == 1:
+                return labels[0], properties[0]
+        raise ValueError(
+            "Native beam retrieval requires a single-label, single-property node vector index"
+        )
 
     def _name(self, variable: str) -> str:
         parts = [f"{variable}.name", f"{variable}.title", f"{variable}.label"]
@@ -94,12 +111,14 @@ class Neo4jBackend(_Neo4jStorage):
 
     def chunk_records(self) -> list[ChunkRecord]:
         if self.native_graph:
+            label, vector_property = self._native_chunk_index
             rows = self._read(
-                "MATCH (chunk) WHERE chunk.text IS NOT NULL "
+                f"MATCH (chunk:{quote(label)}) WHERE chunk[$vector_property] IS NOT NULL "
                 f"RETURN {self._id('chunk')} AS chunk_id,"
-                "coalesce(chunk.path, chunk.file_path, '') AS path,"
-                "coalesce(chunk.text, chunk.content, '') AS text,"
-                "coalesce(chunk.title, chunk.name, '') AS title"
+                "coalesce(chunk.path, chunk.file_path, chunk.source, chunk.uri, '') AS path,"
+                "coalesce(chunk.text, chunk.content, chunk.description, '') AS text,"
+                "coalesce(chunk.title, chunk.name, '') AS title ORDER BY chunk_id",
+                vector_property=vector_property,
             )
             return [
                 ChunkRecord(
@@ -109,7 +128,7 @@ class Neo4jBackend(_Neo4jStorage):
                     title=(row["title"] or "").strip(),
                 )
                 for row in rows
-                if row["chunk_id"]
+                if row["chunk_id"] and row["text"]
             ]
         rows = self._read(
             "MATCH (chunk:RaganiteNode {namespace:$namespace, kind:'chunk'}) "
@@ -132,13 +151,25 @@ class Neo4jBackend(_Neo4jStorage):
         ids = sorted(set(chunk_ids))
         if not ids:
             return {}
-        rows = self._read(
-            "UNWIND $ids AS id "
-            "MATCH (chunk:RaganiteNode {namespace:$namespace, kind:'chunk', raganite_id:id}) "
-            "WHERE chunk.embedding IS NOT NULL "
-            "RETURN chunk.raganite_id AS chunk_id, chunk.embedding AS embedding",
-            ids=ids,
-        )
+        if self.native_graph:
+            label, vector_property = self._native_chunk_index
+            chunk_id = self._id("chunk")
+            rows = self._read(
+                "UNWIND $ids AS id "
+                f"MATCH (chunk:{quote(label)}) "
+                f"WHERE {chunk_id}=id AND chunk[$vector_property] IS NOT NULL "
+                f"RETURN {chunk_id} AS chunk_id, chunk[$vector_property] AS embedding",
+                ids=ids,
+                vector_property=vector_property,
+            )
+        else:
+            rows = self._read(
+                "UNWIND $ids AS id "
+                "MATCH (chunk:RaganiteNode {namespace:$namespace, kind:'chunk', raganite_id:id}) "
+                "WHERE chunk.embedding IS NOT NULL "
+                "RETURN chunk.raganite_id AS chunk_id, chunk.embedding AS embedding",
+                ids=ids,
+            )
         return {
             row["chunk_id"]: tuple(row["embedding"])
             for row in sorted(rows, key=lambda row: row["chunk_id"])
