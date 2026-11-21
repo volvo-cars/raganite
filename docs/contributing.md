@@ -18,7 +18,7 @@ Once Git, uv, and package-registry access are configured:
 git clone git@github.com:volvo-cars/raganite.git
 cd raganite
 git switch -c feature/123-short-description
-uv sync --group dev --extra rerank --python 3.13
+uv sync --group dev --python 3.13
 
 # Make the change, add tests, and add a changelog fragment when appropriate.
 uv run ruff format src tests
@@ -234,7 +234,7 @@ documentation tool, Towncrier is resolved separately for this invocation.
 From the repository root, run:
 
 ```sh
-uv sync --group dev --extra rerank
+uv sync --group dev
 uv run ruff format src tests
 uv run ruff check src
 uv run ty check src
@@ -242,6 +242,8 @@ uv run pytest
 git diff --check
 ```
 
+CI runs these checks without the `rerank` extra. Install it with
+`uv sync --group dev --extra rerank` when manually testing the local cross-encoder.
 
 ## 9. Review, stage, and commit
 

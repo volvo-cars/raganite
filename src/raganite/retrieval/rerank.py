@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from importlib import import_module
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -67,20 +68,20 @@ class CompressorReranker:
 def langchain_cross_encoder(model_name: str, top_n: int) -> Any:
     """Local cross-encoder through LangChain's compressor, not a direct model call."""
     try:
-        from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
-        from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+        compressors = import_module("langchain_classic.retrievers.document_compressors")
+        cross_encoders = import_module("langchain_community.cross_encoders")
     except ImportError as exc:
         raise RuntimeError(
             "Cross-encoder reranking needs the rerank extra: uv sync --extra rerank"
         ) from exc
     logger.warning("Loading cross-encoder %s. The first run downloads its weights.", model_name)
     try:
-        model = HuggingFaceCrossEncoder(model_name=model_name)
+        model = cross_encoders.HuggingFaceCrossEncoder(model_name=model_name)
     except Exception as exc:
         logger.warning("Loading cross-encoder %s failed: %s", model_name, exc)
         raise
     logger.warning("Loaded cross-encoder %s.", model_name)
-    return CrossEncoderReranker(model=model, top_n=top_n)
+    return compressors.CrossEncoderReranker(model=model, top_n=top_n)
 
 
 def as_compressor(value: Any) -> Any:
