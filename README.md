@@ -25,7 +25,7 @@ uv run raganite retrieve "What is the capital of France?" --top-k 5 --format tex
 uv run raganite query "What is the capital of France?" --top-k 5 --format text
 ```
 
-A directory index reads text files whose names match the include globs (`*.py`, `*.md`, `*.rst`, `*.txt`, and the other text patterns in [Indexing](docs/guides/indexing.md)). PDF, HTML, and Office files are left out. A default `query` embeds the question once, fuses chunk vectors with full-text hits and fact expansion, and calls the chat model once to write the answer. Fact filtering and passage reranking are off unless you turn them on. `--top-k` shortens the list after retrieval. SQLite scores every stored vector in the process.
+A directory index reads text files whose names match the include globs (`*.py`, `*.md`, `*.rst`, `*.txt`, and the other text patterns in [Indexing](docs/guides/indexing.md)). PDF, HTML, and Office files are left out. A default `query` embeds the question once, uses [two-hop search](docs/explanation/question-to-passages.md) to find supporting passages, and calls the chat model once to write the answer. Passage reranking is optional and off by default. `--top-k` limits the passages sent to the answer model.
 
 `retrieve` prints each passage's rank, title, source, score, and text. `--format json` adds the supporting facts in `evidence`, plus metadata. `query` text output prints only the answer. `--format json` also includes the passages, their evidence, and token and timing usage.
 
@@ -76,27 +76,12 @@ OpenAI, Azure OpenAI, and Hugging Face can each supply the chat model and the em
 | Index, then ask | [Your first index](docs/getting-started/quickstart.md) |
 | Index a folder from Python | [Indexing](docs/guides/indexing.md) |
 | Retrieve passages or write an answer | [Search and retrieval](docs/guides/retrieval.md) |
+| Read how the search works and how it was evaluated | [Two-hop search](docs/explanation/question-to-passages.md), [Benchmark results](docs/explanation/benchmark-results.md) |
 | Change settings | [Configuration](docs/guides/configuration.md) |
 | Choose a model provider | [Model providers](docs/guides/providers.md) |
 | Separate graphs | [Namespaces](docs/guides/namespaces.md) |
 | Store the graph in Neo4j | [Neo4j](docs/guides/neo4j.md) |
 | Look up a class or a command | [Python API](docs/reference/python-api.md), [Command line](docs/reference/cli.md) |
-| Read the scores in full | [Benchmarks](docs/guides/benchmarking.md) |
-
-## Benchmarks
-
-These are the latest benchmark runs. Both used gpt-4o and `text-embedding-3-large`. The HotpotQA comparison on the benchmarks page uses other models, so those rows are not a same-stack result. The full tables are in [Benchmarks](docs/guides/benchmarking.md).
-
-| Benchmark | Score | What it counts |
-| --- | --- | --- |
-| HotpotQA exact match | 60.9% | 1,000 questions, short answer matches the gold text |
-| HotpotQA answer F1 | 76.2% | Same questions, token overlap with the gold answer |
-| HotpotQA recall at 5 | 95.7% | A supporting passage is in the top 5 |
-| LoCoMo judge | 66.6% | 1,540 questions, adversarial left out, one pass |
-| LoCoMo token F1 | 54.3% | Same 1,540 questions |
-| LoCoMo single-hop judge | 79.5% | 841 questions |
-
-To run the same checks, follow [Run the benchmarks](docs/guides/run-benchmarks.md).
 
 ## License
 

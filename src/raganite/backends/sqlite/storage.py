@@ -269,6 +269,7 @@ class _SQLiteStorage(GraphBackend):
                 )
             self._cleanup()
             self._refresh_degrees()
+        self.note_graph_write()
 
     def store_shared_edges(
         self, edges: Sequence[tuple[GraphEdge, Sequence[tuple[str, str]]]]
@@ -296,6 +297,7 @@ class _SQLiteStorage(GraphBackend):
                     [(self.namespace, source, path, edge.id) for source, path in owners],
                 )
             self._refresh_degrees()
+        self.note_graph_write()
 
     def store_shared_nodes(
         self, nodes: Sequence[tuple[GraphNode, Sequence[tuple[str, str]]]]
@@ -323,6 +325,7 @@ class _SQLiteStorage(GraphBackend):
                     "INSERT OR IGNORE INTO document_nodes VALUES (?, ?, ?, ?)",
                     [(self.namespace, source, path, node.id) for source, path in owners],
                 )
+        self.note_graph_write()
 
     def _sequence_edge_ids(self, source: str) -> list[str]:
         rows = self._connection.execute(
@@ -386,6 +389,7 @@ class _SQLiteStorage(GraphBackend):
                 )
             self._cleanup()
             self._refresh_degrees()
+        self.note_graph_write()
 
     def _refresh_degrees(self) -> None:
         """Store each entity's neighbor count so retrieval does not scan edges per step."""
@@ -432,7 +436,9 @@ class _SQLiteStorage(GraphBackend):
             )
             self._cleanup()
             self._refresh_degrees()
-            return len(stale)
+            deleted = len(stale)
+        self.note_graph_write()
+        return deleted
 
     def nodes(
         self,

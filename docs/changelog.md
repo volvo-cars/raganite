@@ -1,4 +1,3 @@
 # Changelog
 
-Notable changes are recorded in `CHANGELOG.md` at the repository root. The format follows Keep a Changelog, and versions follow semantic versioning.
-
+See the [Raganite changelog on GitHub](https://github.com/volvo-cars/raganite/blob/main/CHANGELOG.md) for release changes.

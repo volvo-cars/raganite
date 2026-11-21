@@ -16,5 +16,5 @@ Raganite builds a knowledge graph from your files. `retrieve` returns the passag
 | Store the graph in Neo4j | [Neo4j](guides/neo4j.md) |
 | Choose OpenAI or Azure | [Model providers](guides/providers.md) |
 | Look up a class or a command | [Python API](reference/python-api.md), [Command line](reference/cli.md) |
-| Understand the words the library uses | [How a question becomes passages](explanation/question-to-passages.md) |
-| See how the library was checked | [Benchmarks](guides/benchmarking.md) |
+| Understand how the beam finds passages | [How the two-hop search works](explanation/question-to-passages.md) |
+| See evaluation scores and what they measure | [Benchmark results](explanation/benchmark-results.md) |

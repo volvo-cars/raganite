@@ -13,14 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Neo4j fact search and schema-adaptive expansion; no APOC or Python graph scans."""
+"""Neo4j passage search and beam snapshots."""
 
 from collections.abc import Sequence
-from dataclasses import asdict
-from typing import Any
 
 from ..base import validate_vector
-from ..models import FactHit, GraphExpansion, PassageHit, validate_expansion
+from ..models import ChunkRecord, FactEdge, PassageHit
+from ..snapshot import stored_chunk_records, stored_fact_edges
 from .storage import _Neo4jStorage
 from .traversal import TraversalSchema, discover, passage_columns, quote
 
@@ -45,11 +44,6 @@ class Neo4jBackend(_Neo4jStorage):
             self._traversal_schema = discover(self)
         return self._traversal_schema
 
-    def _entity(self, variable: str) -> str:
-        if self.native_graph:
-            return f"{variable}:{quote(self._schema().entity_label)}"
-        return f"{self._scope(variable)} AND {variable}.kind='entity'"
-
     def _name(self, variable: str) -> str:
         parts = [f"{variable}.name", f"{variable}.title", f"{variable}.label"]
         if self.native_graph:
@@ -57,23 +51,98 @@ class Neo4jBackend(_Neo4jStorage):
         parts.append(self._id(variable))
         return "coalesce(" + ",".join(parts) + ")"
 
-    def _degree(self, variable: str) -> str:
-        # The live edge count takes relationship locks and deadlocks under concurrent reads.
-        return f"coalesce(toFloat({variable}.semantic_degree), 0.0)"
-
-    def prepare(self) -> None:
-        self._schema()
-        rows = self._read(
-            "SHOW INDEXES YIELD name,type,state,options WHERE name=$name RETURN type,state,options",
-            name=self._lookup_index(self.config.fact_vector_index),
-        )
-        if not rows or rows[0]["type"] != "VECTOR" or rows[0]["state"] != "ONLINE":
-            raise ValueError(
-                "Triple retrieval requires an ONLINE fact vector index; index facts first"
+    def fact_edges(self) -> list[FactEdge]:
+        subject = quote(self.topology.fact_subject)
+        obj = quote(self.topology.fact_object)
+        if not self.native_graph:
+            return stored_fact_edges(
+                self._read(
+                    "MATCH (fact:RaganiteNode {namespace:$namespace, kind:'fact'}) "
+                    "WHERE fact.embedding IS NOT NULL "
+                    f"MATCH (fact)-[:{subject} {{namespace:$namespace}}]->"
+                    "(s:RaganiteNode {namespace:$namespace, kind:'entity'}) "
+                    f"MATCH (fact)-[:{obj} {{namespace:$namespace}}]->"
+                    "(o:RaganiteNode {namespace:$namespace, kind:'entity'}) "
+                    "RETURN fact.properties_json AS properties,fact.embedding AS embedding,"
+                    "s.raganite_id AS subject_id,s.label AS subject_label,s.properties_json AS subject_properties,"
+                    "o.raganite_id AS object_id,o.label AS object_label,o.properties_json AS object_properties"
+                )
             )
-        dimensions = rows[0].get("options", {}).get("indexConfig", {}).get("vector.dimensions")
-        if dimensions is not None and dimensions != self.dimensions:
-            raise ValueError("Fact index dimensions do not match the embedding configuration")
+        rows = self._read(
+            "MATCH (fact:__Fact__) WHERE fact.embedding IS NOT NULL "
+            f"MATCH (fact)-[:{subject}]->(subject) "
+            f"MATCH (fact)-[:{obj}]->(object) "
+            f"RETURN {self._name('subject')} AS source,{self._name('object')} AS target,"
+            "fact.text AS text,fact.relation_type AS relation_type,"
+            "fact.relationship_id AS relationship_id,fact.embedding AS embedding"
+        )
+        edges = []
+        for row in rows:
+            if not row["source"] or not row["target"] or not row["text"] or not row["embedding"]:
+                continue
+            edges.append(
+                FactEdge(
+                    source=row["source"],
+                    target=row["target"],
+                    text=row["text"],
+                    relation_type=row["relation_type"] or "",
+                    relationship_id=row["relationship_id"] or "",
+                    embedding=tuple(row["embedding"]),
+                )
+            )
+        return edges
+
+    def chunk_records(self) -> list[ChunkRecord]:
+        if self.native_graph:
+            rows = self._read(
+                "MATCH (chunk) WHERE chunk.text IS NOT NULL "
+                f"RETURN {self._id('chunk')} AS chunk_id,"
+                "coalesce(chunk.path, chunk.file_path, '') AS path,"
+                "coalesce(chunk.text, chunk.content, '') AS text,"
+                "coalesce(chunk.title, chunk.name, '') AS title"
+            )
+            return [
+                ChunkRecord(
+                    chunk_id=row["chunk_id"],
+                    path=row["path"] or "",
+                    text=row["text"] or "",
+                    title=(row["title"] or "").strip(),
+                )
+                for row in rows
+                if row["chunk_id"]
+            ]
+        rows = self._read(
+            "MATCH (chunk:RaganiteNode {namespace:$namespace, kind:'chunk'}) "
+            "OPTIONAL MATCH (owner:RaganiteOwner {namespace:$namespace})-[:OWNS_NODE]->(chunk) "
+            "OPTIONAL MATCH (owner)-[:OWNS_NODE]->(doc:RaganiteNode {namespace:$namespace, kind:'document'}) "
+            "RETURN chunk.raganite_id AS chunk_id,chunk.properties_json AS properties,"
+            "owner.source AS owner_source,owner.path AS owner_path,"
+            "doc.raganite_id AS doc_id,doc.properties_json AS document_properties"
+        )
+        links = self._read(
+            "MATCH (owner:RaganiteOwner {namespace:$namespace})-[:OWNS_NODE]->"
+            "(chunk:RaganiteNode {namespace:$namespace, kind:'chunk'}) "
+            "MATCH (owner)-[:OWNS_NODE]->(entity:RaganiteNode {namespace:$namespace, kind:'entity'}) "
+            "RETURN DISTINCT chunk.raganite_id AS chunk_id, entity.raganite_id AS entity_id,"
+            "entity.label AS label, entity.properties_json AS properties"
+        )
+        return stored_chunk_records(rows, links)
+
+    def chunk_embeddings(self, chunk_ids: Sequence[str]) -> dict[str, tuple[float, ...]]:
+        ids = sorted(set(chunk_ids))
+        if not ids:
+            return {}
+        rows = self._read(
+            "UNWIND $ids AS id "
+            "MATCH (chunk:RaganiteNode {namespace:$namespace, kind:'chunk', raganite_id:id}) "
+            "WHERE chunk.embedding IS NOT NULL "
+            "RETURN chunk.raganite_id AS chunk_id, chunk.embedding AS embedding",
+            ids=ids,
+        )
+        return {
+            row["chunk_id"]: tuple(row["embedding"])
+            for row in sorted(rows, key=lambda row: row["chunk_id"])
+        }
 
     def direct_passages(self, embedding: list[float], *, top_k: int) -> list[PassageHit]:
         if not self.native_graph:
@@ -89,62 +158,3 @@ class Neo4jBackend(_Neo4jStorage):
             embedding=embedding,
         )
         return [PassageHit(**row) for row in rows]
-
-    def search_facts(self, embedding: list[float], *, top_k: int = 10) -> list[FactHit]:
-        if top_k < 1:
-            raise ValueError("top_k must be positive")
-        validate_vector(embedding, self.dimensions)
-        params: dict[str, Any] = {"embedding": embedding, "top_k": top_k}
-        if self.native_graph:
-            start = "CALL db.index.vector.queryNodes($index,$top_k,$embedding) YIELD node AS fact,score "
-            params["index"] = self._index(self.config.fact_vector_index)
-        else:
-            hits = self.vector_search(embedding, top_k=top_k, kind="fact")
-            params["hits"] = [{"id": h.node.id, "score": h.score} for h in hits]
-            start = "UNWIND $hits AS hit MATCH (fact:RaganiteNode {namespace:$namespace,raganite_id:hit.id}) WITH fact,hit.score AS score "
-        rows = self._read(
-            start + "MATCH (fact)-[:FACT_SUBJECT]->(subject) MATCH (fact)-[:FACT_OBJECT]->(object) "
-            f"WHERE {self._entity('subject')} AND {self._entity('object')} "
-            f"RETURN {self._id('fact')} AS fact_id,fact.relationship_id AS relationship_id, "
-            "fact.text AS text,fact.relation_type AS relation_type,score, "
-            f"{self._id('subject')} AS subject_id,{self._name('subject')} AS subject, "
-            f"{self._degree('subject')} AS subject_degree, "
-            f"{self._id('object')} AS object_id,{self._name('object')} AS object, "
-            f"{self._degree('object')} AS object_degree ORDER BY score DESC",
-            **params,
-        )
-        return [FactHit(**row) for row in rows]
-
-    def expand_facts(
-        self,
-        facts: Sequence[FactHit],
-        *,
-        depth: int = 2,
-        limit: int = 5000,
-        degree_penalty_weight: float = 0.25,
-    ) -> list[GraphExpansion]:
-        validate_expansion(depth, limit, degree_penalty_weight)
-        if not facts:
-            return []
-        schema = self._schema()
-        rows = self._read(
-            f"UNWIND $facts AS selected MATCH (fact:__Fact__) WHERE {self._scope('fact')} AND {self._id('fact')}=selected.fact_id "
-            f"MATCH (fact)-[:FACT_SUBJECT|FACT_OBJECT]->(seed:{quote(schema.entity_label)}) "
-            f"MATCH path=(seed)-[*0..{depth}]-(related:{quote(schema.entity_label)}) "
-            f"WHERE all(entity IN nodes(path) WHERE {self._entity('entity')}) "
-            f"MATCH (expanded:{quote(schema.indexed_label)})-[:{quote(schema.entity_connector)}]-(related) "
-            f"WHERE {self._scope('expanded')} "
-            f"OPTIONAL MATCH (expanded)-[:{quote(schema.source_connector)}]-(document:{quote(schema.source_label)}) "
-            f"WITH selected,seed,related,path,expanded,document,[entity IN nodes(path) | {self._degree('entity')}] AS degrees "
-            "WITH *,selected.score/((1.0+length(path))*reduce(p=1.0,d IN degrees | p*(1.0+$weight*log(1.0+d)))) AS expansion_score "
-            "ORDER BY expansion_score DESC LIMIT $limit "
-            f"RETURN {passage_columns(self, 'expanded', 'document')},expansion_score, "
-            "selected.relationship_id AS relationship_id,selected.text AS fact_text, "
-            f"{self._name('seed')} AS seed_entity, "
-            f"{self._name('related')} AS related_entity, "
-            "degrees AS path_degrees,[r IN relationships(path) | type(r)] AS graph_path",
-            facts=[asdict(f) for f in facts],
-            weight=degree_penalty_weight,
-            limit=limit,
-        )
-        return [GraphExpansion(**row) for row in rows]

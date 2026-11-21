@@ -18,7 +18,7 @@
 from raganite.config import Neo4jConfig, RaganiteConfig
 
 from .base import DocumentGraph, GraphBackend, GraphEdge, GraphNode, SearchHit
-from .models import FactHit, GraphExpansion, PassageHit
+from .models import PassageHit
 from .neo4j import Neo4jBackend
 from .sqlite import SQLiteBackend
 
@@ -55,7 +55,5 @@ __all__ = [
     "SQLiteBackend",
     "SearchHit",
     "create_backend",
-    "FactHit",
-    "GraphExpansion",
     "PassageHit",
 ]

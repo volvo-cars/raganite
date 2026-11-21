@@ -9,15 +9,15 @@ with KnowledgeGraph(embeddings=embeddings, llm=chat) as graph:
 for passage in passages:
     print(passage.score, passage.title)
     print(passage.text)
-    for fact in passage.evidence:
-        print(fact.fact, fact.seed_entity, fact.related_entity)
 ```
 
-Each `Passage` has `source`, `title`, `text`, `score`, `evidence`, and `metadata`. `evidence` is empty when the passage came only from a direct chunk match. `passages.usage` records elapsed time and token totals for that retrieval run.
+Each `Passage` has `source`, `title`, `text`, `score`, `evidence`, and `metadata`. The beam uses facts to select passages but does not attach the supporting graph path as structured `evidence`. `passages.usage` records elapsed time and token totals for that retrieval run.
 
-`retrieve` embeds the question once. By default it searches chunks, the full-text index, and facts at the same time, then expands the top 10 facts and fuses the three lists. A passage keeps the facts that led to it on `evidence`. It does not call the chat model. Set `filter_triples` to ask the chat model to drop weak facts. Set `reranker` to `llm` to ask the chat model to reorder passages, to `cross-encoder` for LangChain's local cross-encoder, or to `compressor` and pass a LangChain reranker such as Cohere. Both the local model and an API implement `compress_documents`. `rerank_passages` still selects the chat model. Set `use_fulltext` to false to skip the full-text list. The configured candidate width is applied before `top_k`. `top_k` only shortens the list returned after that work. `retrieve` does not generate an answer. `raganite retrieve --format text` prints `fact filter` or `passage rerank` when that step runs. `raganite query --format text` prints only the answer.
+`retrieve` embeds the question once. By default, the [two-hop beam walk](../explanation/question-to-passages.md) starts with candidates from directed fact PageRank and direct passage signals, adds candidates connected by title mentions, and scores directed paths. Raganite ships the learned weights and loads them automatically. No separate model file or chat model is needed for retrieval.
 
-`query` does that retrieval and then calls the chat model once to answer from the returned passages. With both ranking flags left off, that is the only chat call:
+Passage reranking is off by default. To opt in, select `llm`, `cross-encoder` (install the `rerank` extra), or `compressor` (pass an object implementing `compress_documents` to the retriever). The legacy `rerank_passages=true` setting still selects the LLM reranker when no other reranker is selected. `retrieve` does not generate an answer.
+
+`query` does that retrieval and then calls the chat model once to answer from the returned passages. With reranking off, that is the only chat call:
 
 ```python
 answer = graph.query("What is the capital of France?", top_k=5)
@@ -43,21 +43,17 @@ batches = graph.retriever.retrieve_many(
 
 ## Turn pieces off
 
-Use this when you want chunk search only, or when you have embeddings but no chat model:
+Use this when you want direct chunk search instead of the beam walk. Neither mode needs a chat model unless you enable the LLM reranker:
 
 ```python
 from raganite.config import RaganiteConfig, RetrievalConfig
 
 config = RaganiteConfig(
-    retrieval=RetrievalConfig(
-        use_triples=False,
-        filter_triples=False,
-        rerank_passages=False,
-    ),
+    retrieval=RetrievalConfig(use_triples=False),
 )
 ```
 
-`use_triples=False` skips fact search and expansion. `use_fulltext=False` skips the full-text list. Fact filtering and passage reranking already default to off, so retrieval can be constructed without a chat model. `query` still needs one.
+`use_triples=False` skips the beam and uses direct chunk search. `use_fulltext=False` skips the additional full-text list in direct search. `query` still needs a chat model.
 
 ## Titles
 

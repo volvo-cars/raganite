@@ -20,7 +20,7 @@ import fnmatch
 import hashlib
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -37,6 +37,7 @@ from neo4j_graphrag.components.entity_relation_extractor import LLMEntityRelatio
 from neo4j_graphrag.components.schema import SchemaFromTextExtractor
 from neo4j_graphrag.components.text_splitters.fixed_size_splitter import FixedSizeSplitter
 from neo4j_graphrag.components.types import DocumentInfo, TextChunk, TextChunks
+from neo4j_graphrag.generation.prompts import ERExtractionTemplate
 from neo4j_graphrag.llm import LLMBase, LLMResponse
 
 from raganite.backends.base import (
@@ -54,6 +55,53 @@ from raganite.schema import default_schema
 from raganite.schema.topology import GraphTopology
 
 logger = logging.getLogger(__name__)
+
+
+_NAME_RULE = (
+    "Every node must include properties.name. "
+    "The name is the specific thing in the text, not the label. "
+    "The label is only the type. "
+    "If the text gives the thing a title, properties.name must be that title."
+)
+
+
+class _NamedExtractionTemplate(ERExtractionTemplate):
+    """Free and fixed extraction both have to fill properties.name."""
+
+    DEFAULT_TEMPLATE = ERExtractionTemplate.DEFAULT_TEMPLATE.replace(
+        "Assign a unique ID (string) to each node, and reuse it to define relationships.",
+        "Assign a unique ID (string) to each node, and reuse it to define relationships.\n"
+        + _NAME_RULE,
+    )
+
+
+def _present(value: Any) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def entity_name(properties: Mapping[str, Any], label: str) -> str:
+    """The node's name, or its title when the extractor left the name empty."""
+    return _present(properties.get("name")) or _present(properties.get("title")) or label
+
+
+def assign_entity_name(properties: dict[str, Any]) -> None:
+    """Copy a title into name so later facts do not fall back to the label."""
+    if _present(properties.get("name")):
+        return
+    title = _present(properties.get("title"))
+    if title:
+        properties["name"] = title
+
+
+def passage_title(metadata: Mapping[str, Any] | None) -> str:
+    """Title or name stored with a document, when the corpus has one."""
+    if not isinstance(metadata, Mapping):
+        return ""
+    for key in ("title", "name"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def resolved_entity_id(namespace: str, label: str, name: str) -> str:
@@ -96,8 +144,8 @@ def fact_statement(edge: GraphEdge, nodes: dict[str, GraphNode]) -> str | None:
     target = nodes.get(edge.target)
     if source is None or target is None or source.kind != "entity" or target.kind != "entity":
         return None
-    subject = source.properties.get("name", source.label)
-    object_ = target.properties.get("name", target.label)
+    subject = entity_name(source.properties, source.label)
+    object_ = entity_name(target.properties, target.label)
     suffix = (
         " | " + json.dumps(edge.properties, ensure_ascii=False, sort_keys=True)
         if edge.properties
@@ -399,7 +447,7 @@ class KnowledgeGraphIndexer:
         if cfg.schema_mode == "extracted":
             with usage_stage("indexing.extract"):
                 schema = await SchemaFromTextExtractor(llm=adapter).run(text=document.page_content)
-        options: dict[str, Any] = {}
+        options: dict[str, Any] = {"prompt_template": _NamedExtractionTemplate()}
         if cfg.extraction_prompt is not None:
             options["prompt_template"] = cfg.extraction_prompt
         extractor = LLMEntityRelationExtractor(
@@ -426,16 +474,22 @@ class KnowledgeGraphIndexer:
                 if node.label == "Chunk"
                 else "entity"
             )
+            properties: dict[str, Any] = dict(node.properties)
+            if kind == "entity":
+                assign_entity_name(properties)
             node_id = node.id
-            name = node.properties.get("name")
+            name = properties.get("name")
             if kind == "entity" and cfg.perform_entity_resolution and isinstance(name, str):
                 node_id = resolved_entity_id(self.backend.namespace, node.label, name)
             mapped[node.id] = node_id
-            properties: dict[str, Any] = dict(node.properties)
             if kind in {"document", "chunk"}:
                 properties.update({"source": source, "path": path})
             if kind == "chunk":
                 properties["_chunk_id"] = node_id
+                if not str(properties.get("title") or "").strip():
+                    title = passage_title(document.metadata)
+                    if title:
+                        properties["title"] = title
             if kind == "document":
                 properties.update({"metadata": document.metadata, "content_hash": content_hash})
             nodes[node_id] = GraphNode(
@@ -526,6 +580,12 @@ class KnowledgeGraphIndexer:
         self.backend.require_writable()
         await asyncio.to_thread(self.backend.ensure_indexes)
         cfg = self.config.indexing
+        logger.info(
+            "Indexing %s documents from %s with %s workers",
+            len(documents),
+            source,
+            cfg.workers,
+        )
         calls = asyncio.Semaphore(cfg.workers)
         paths = [
             str(doc.metadata.get("path", doc.metadata.get("source", doc.id or str(i))))
@@ -556,15 +616,21 @@ class KnowledgeGraphIndexer:
                 previous = await asyncio.to_thread(self.backend.document_hash, source, path)
                 if not force and previous == digest:
                     return "skipped", path, "unchanged"
+                logger.info("Extracting %s", path)
                 graph = await self._build_graph(document, source, path, digest, calls)
                 await asyncio.to_thread(self.backend.replace_document, graph)
+                logger.info("Stored %s", path)
                 return "indexed", path, ""
             except Exception as exc:
-                logger.debug("Indexing %s failed: %s", path, exc, exc_info=True)
+                logger.info("Failed %s: %s", path, str(exc).splitlines()[0])
+                logger.debug("Indexing %s failed", path, exc_info=True)
                 return "failed", path, str(exc)
 
         workers = self.config.indexing.workers
-        for offset in range(0, len(documents), workers):
+        total = len(documents)
+        for offset in range(0, total, workers):
+            stop = min(offset + workers, total)
+            logger.info("Indexing batch %s-%s of %s", offset + 1, stop, total)
             results = await asyncio.gather(
                 *(
                     index_one(doc, path)
@@ -582,6 +648,14 @@ class KnowledgeGraphIndexer:
                     report.skipped_files.append((path, reason))
                 else:
                     report.failed_files.append((path, reason))
+            logger.info(
+                "Progress %s/%s: indexed %s, skipped %s, failed %s",
+                stop,
+                total,
+                len(report.indexed_files),
+                len(report.skipped_files),
+                len(report.failed_files),
+            )
         ordered = any(sequence_position(document.metadata) is not None for document in documents)
         if ordered or await asyncio.to_thread(self.backend.has_sequence, source):
             await self._link_sequence(source)

@@ -72,15 +72,12 @@ class KnowledgeGraph:
         """Initialize retrieval on demand so an empty graph can be indexed first."""
         if self._retriever is None:
             self._retriever = Retriever(
-                self.backend,
-                self._embeddings,
-                self._llm,
-                self.config.retrieval,
+                self.backend, self._embeddings, self._llm, self.config.retrieval
             )
         return self._retriever
 
     def retrieve(self, question: str, *, top_k: int | None = None) -> RetrievalResult:
-        """Return fact-expanded and reranked passages for a question."""
+        """Return passages using the configured retrieval strategy."""
         return self.retriever.retrieve(question, top_k=top_k)
 
     def query(self, question: str, *, top_k: int | None = None) -> Answer:

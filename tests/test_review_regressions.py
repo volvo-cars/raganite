@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from benchmark.cli import main as benchmark_main
 from click.testing import CliRunner
 
 from raganite.cli import main
@@ -62,13 +61,34 @@ def test_cli_supports_explicit_dotenv_file(tmp_path, monkeypatch):
     assert result.exit_code == 2
 
 
-def test_cli_options_and_benchmark_commands():
-    # Dotenv loading has no opt-out; only production benchmark commands remain.
+def test_cli_options_include_env_file():
     for command in (main, *main.commands.values()):
         option_names = {parameter.name for parameter in command.params}
         assert "no_env_file" not in option_names
         assert "env_file" in option_names
-    assert set(benchmark_main.commands) == {"hotpotqa", "locomo"}
+
+
+def test_cli_exposes_no_graph_strategy_or_checkpoint_selector(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("RAGANITE_RETRIEVAL__GRAPH", raising=False)
+    monkeypatch.delenv("RAGANITE_RETRIEVAL", raising=False)
+    runner = CliRunner()
+    result = runner.invoke(main, ["config"])
+    assert result.exit_code == 0, result.output
+    assert "beam_model" not in result.output
+    help_result = runner.invoke(main, ["retrieve", "--help"])
+    assert help_result.exit_code == 0, help_result.output
+    assert "--beam-model" not in help_result.output
+    assert "--retrieval-graph" not in help_result.output
+
+
+def test_cli_can_disable_reranker_from_environment(monkeypatch):
+    monkeypatch.setenv("RAGANITE_RETRIEVAL__RERANK_PASSAGES", "true")
+    monkeypatch.setenv("RAGANITE_RETRIEVAL__RERANKER", "llm")
+    result = CliRunner().invoke(main, ["config", "--reranker", "none"])
+    assert result.exit_code == 0, result.output
+    assert '"reranker": "none"' in result.output
+    assert '"rerank_passages": false' in result.output
 
 
 def test_default_imports_without_optional_provider_packages():

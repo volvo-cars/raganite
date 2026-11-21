@@ -1,4 +1,6 @@
 site_name: Raganite
+exclude_docs: |
+  /superpowers/
 site_description: Index documents into a knowledge graph, retrieve passages, and answer a question from those passages.
 site_url: https://volvo-cars.github.io/raganite
 repo_url: https://github.com/volvo-cars/raganite
@@ -44,14 +46,12 @@ nav:
       - guides/namespaces.md
       - guides/providers.md
       - guides/neo4j.md
-      - guides/benchmarking.md
-      - guides/run-benchmarks.md
   - Explanation:
       - explanation/question-to-passages.md
+      - explanation/benchmark-results.md
   - Reference:
       - reference/python-api.md
       - reference/cli.md
-      - reference/benchmark-cli.md
   - Project:
       - contributing.md
       - changelog.md
@@ -61,6 +61,8 @@ markdown_extensions:
   - admonition
   - attr_list
   - md_in_html
+  - pymdownx.arithmatex:
+      generic: true
   - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true
@@ -71,6 +73,10 @@ markdown_extensions:
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
   - tables
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-chtml.js
 
 plugins:
   - search

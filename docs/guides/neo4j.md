@@ -1,6 +1,6 @@
 # Neo4j
 
-Use Neo4j when the graph should live in Neo4j instead of a SQLite file. SQLite scores every stored vector in the process. Neo4j uses its vector indexes. You still call `KnowledgeGraph` the same way.
+Use Neo4j when the graph should live in Neo4j instead of a SQLite file. Both backends use the same beam search over graph records loaded into memory. For direct vector search, SQLite scores stored vectors in process, while Neo4j uses a vector index. You still call `KnowledgeGraph` the same way.
 
 ## Owned layout
 
@@ -29,6 +29,12 @@ with KnowledgeGraph(embeddings=embeddings, llm=chat, config=config) as graph:
 ```
 
 Set `read_only=True` on `Neo4jConfig` when this process must not write. Indexing then raises `PermissionError`.
+
+Owned Neo4j and SQLite use the same indexer and retrieval code. Beam search
+loads the same kinds of records from either store: fact endpoints and
+vectors, chunk IDs and text, and the provenance connecting them. Their native
+vector and full-text indexes use different search implementations, so a
+direct-search result or score is not guaranteed to match across stores.
 
 ## Native layout
 

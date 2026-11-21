@@ -21,7 +21,7 @@ _handler: logging.Handler | None = None
 
 
 def configure_logging(verbosity: int) -> None:
-    """Warnings by default. ``-v`` adds info. ``-vv`` logs each caught failure."""
+    """Warnings by default. ``-v`` logs each stage. ``-vv`` also logs debug detail."""
     if verbosity >= 2:
         level = logging.DEBUG
     elif verbosity == 1:
@@ -33,9 +33,8 @@ def configure_logging(verbosity: int) -> None:
         _handler = logging.StreamHandler()
         _handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
     _handler.setLevel(level)
-    for name in ("raganite", "benchmark"):
-        logger = logging.getLogger(name)
-        logger.setLevel(level)
-        if _handler not in logger.handlers:
-            logger.addHandler(_handler)
-        logger.propagate = False
+    logger = logging.getLogger("raganite")
+    logger.setLevel(level)
+    if _handler not in logger.handlers:
+        logger.addHandler(_handler)
+    logger.propagate = False

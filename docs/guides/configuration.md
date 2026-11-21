@@ -51,7 +51,7 @@ config = RaganiteConfig.from_file("settings.toml")
 | `embedding_dimensions` | Vector length. Default `1536` |
 | `chat`, `embeddings` | Model name and provider used by the CLI |
 | `indexing` | Chunk size, extraction, and whether facts are stored |
-| `retrieval` | How many passages come back, and whether facts are filtered and reranked |
+| `retrieval` | Search settings, passage limits, and optional passage reranking |
 
 `raganite config` prints the resolved settings with secrets masked. It does not need a model key.
 
@@ -60,16 +60,17 @@ config = RaganiteConfig.from_file("settings.toml")
 | Field | Default | Effect |
 | --- | --- | --- |
 | `top_k` | `200` | How many passages `Retriever` keeps before a caller slices them |
-| `use_triples` | `true` | Search facts and expand them, or use direct chunk search only |
-| `use_fulltext` | `true` | Fuse full-text hits with the chunk and fact lists |
+| `use_triples` | `true` | Use the beam walk; set to `false` for direct chunk search |
+| `use_fulltext` | `true` | Fuse full-text hits with vector hits during direct search |
 | `fulltext_weight` | `1.0` | Weight of the full-text list in fusion |
-| `filter_triples` | `false` | Ask the chat model to drop weak facts |
-| `rerank_passages` | `false` | Ask the chat model to reorder the final passages. Same as `reranker=llm` |
-| `reranker` | `none` | `none` keeps the fused order. `llm` asks the chat model. `cross-encoder` uses LangChain's local cross-encoder. `compressor` uses the compressor you pass to `Retriever` |
+| `rerank_passages` | `false` | Legacy setting that selects the LLM reranker when no other reranker is selected |
+| `reranker` | `none` | `none` keeps the retrieval order. `llm` asks the chat model. `cross-encoder` uses LangChain's local cross-encoder. `compressor` uses the compressor you pass to `Retriever` |
 | `reranker_model` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Model for `reranker=cross-encoder`. Install it with `uv sync --extra rerank` |
-| `triple_top_k` | `10` | Facts that can start a graph walk |
-| `expansion_depth` | `2` | How far fact expansion walks, from 0 to 5 |
+| `fact_temperature` / `fact_damping` | `0.1` / `0.85` | Outgoing fact softmax temperature and PageRank damping |
+| `fact_seed_count` / `passage_seed_weight` | `5` / `0.05` | Number of restart facts and direct-passage weight |
+| `beam_width` | `8` | Maximum number of first-hop states |
+| `beam_start_candidates` / `beam_bridge_candidates` | `20` / `20` | Starting passages and maximum bridge additions |
 
 The CLI `retrieve` command still defaults `--top-k` to `5`. That limit applies after ranking. It does not change `RetrievalConfig.top_k`.
 
-Fact filtering and the chat-model reranker require a chat model. If either is on and no model was passed, constructing `Retriever` raises `ValueError`. The cross-encoder does not use the chat model. A hosted rerank API is the same call: pass any object with `compress_documents` and set `reranker` to `compressor`.
+The LLM reranker requires a chat model. The cross-encoder does not. To use a hosted reranking API, pass an object with `compress_documents` and set `reranker` to `compressor`.

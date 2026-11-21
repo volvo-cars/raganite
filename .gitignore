@@ -155,6 +155,11 @@ Reports/*
 
 # Local graph directories and generated benchmark files
 .raganite/
-benchmark/data/
-benchmark/results/
+/benchmark/
+/experiment/
+/experimenting/
+/datasets/city/
+/docs/superpowers/
 
+# Brainstorm session files, including the session key
+.superpowers/
