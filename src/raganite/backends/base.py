@@ -18,6 +18,7 @@
 import hashlib
 import json
 import math
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, Literal
@@ -26,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from raganite.schema.topology import OWNED, GraphTopology
 
-from .models import FactHit, GraphExpansion, PassageHit
+from .models import ChunkRecord, FactEdge, PassageHit
 
 NodeKind = Literal["document", "chunk", "entity", "source", "namespace", "fact"]
 
@@ -111,6 +112,17 @@ class GraphBackend(ABC):
         self.dimensions = dimensions
         self.read_only = read_only
         self.topology = topology or OWNED
+        self._graph_generation = 0
+        self._graph_generation_lock = threading.Lock()
+
+    def note_graph_write(self) -> None:
+        """Drop any fact-graph snapshot after a committed write."""
+        with self._graph_generation_lock:
+            self._graph_generation += 1
+
+    @property
+    def graph_generation(self) -> int:
+        return self._graph_generation
 
     def require_writable(self) -> None:
         if self.read_only:
@@ -213,10 +225,6 @@ class GraphBackend(ABC):
         """Rank chunks by full text. Retrieval uses this query, not edges()."""
         return self.fulltext_search(query, top_k=top_k, source=source)
 
-    @abstractmethod
-    def prepare(self) -> None:
-        """Validate fact storage and cache traversal topology without writing data."""
-
     def _passage_hits(self, hits: list[SearchHit]) -> list[PassageHit]:
         rows = []
         for hit in hits:
@@ -240,27 +248,27 @@ class GraphBackend(ABC):
             rows.append(PassageHit(hit.node.id, source, text, hit.score))
         return rows
 
+    def fact_edges(self) -> list[FactEdge]:
+        """Return embedded facts and endpoints, ordered by relationship ID in owned graphs.
+
+        Optional for direct-search backends. Return an empty list if the snapshot has no facts.
+        """
+        raise NotImplementedError("This backend does not provide fact edges")
+
+    def chunk_records(self) -> list[ChunkRecord]:
+        """Return chunk snapshot records; optional for direct-search backends."""
+        raise NotImplementedError("This backend does not provide chunk records")
+
+    def chunk_embeddings(self, chunk_ids: Sequence[str]) -> dict[str, tuple[float, ...]]:
+        """Stored passage embeddings by chunk ID, excluding missing IDs and unembedded chunks."""
+        return {}
+
     def direct_passages(self, embedding: list[float], *, top_k: int) -> list[PassageHit]:
         return self._passage_hits(self.search_chunks(embedding, top_k=top_k))
 
     def lexical_passages(self, query: str, *, top_k: int) -> list[PassageHit]:
         """Rank chunks by full text and return the same passage records as vectors."""
         return self._passage_hits(self.search_fulltext(query, top_k=top_k))
-
-    @abstractmethod
-    def search_facts(self, embedding: list[float], *, top_k: int = 10) -> list[FactHit]:
-        """Return ranked facts with both endpoints and semantic degrees."""
-
-    @abstractmethod
-    def expand_facts(
-        self,
-        facts: Sequence[FactHit],
-        *,
-        depth: int = 2,
-        limit: int = 5000,
-        degree_penalty_weight: float = 0.25,
-    ) -> list[GraphExpansion]:
-        """Rank entity-only paths to chunks with the reference degree penalty."""
 
     @abstractmethod
     def close(self) -> None:

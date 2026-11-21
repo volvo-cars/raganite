@@ -132,22 +132,22 @@ class IndexingConfig(ConfigModel):
 
 
 class RetrievalConfig(ConfigModel):
-    """Fact search, graph expansion, passage fusion, and optional LLM ranking."""
+    """Two-hop beam retrieval, direct search, and optional passage reranking."""
 
     workers: int = Field(default_factory=cpu_workers, ge=1)
     top_k: int = Field(default=200, ge=1)
-    triple_top_k: int = Field(default=10, ge=1)
-    filtered_triple_k: int = Field(default=8, ge=1)
-    expansion_depth: int = Field(default=2, ge=0, le=5)
-    expansion_limit: int = Field(default=5000, ge=1)
-    degree_penalty_weight: float = Field(default=0.25, ge=0, allow_inf_nan=False)
-    graph_weight: float = Field(default=1.0, ge=0, allow_inf_nan=False)
     use_fulltext: bool = True
     fulltext_weight: float = Field(default=1.0, ge=0, allow_inf_nan=False)
     rrf_k: int = Field(default=60, ge=1)
     rerank_top_k: int = Field(default=20, ge=1)
     use_triples: bool = True
-    filter_triples: bool = False
+    fact_temperature: float = Field(default=0.1, gt=0, allow_inf_nan=False)
+    fact_damping: float = Field(default=0.85, ge=0, lt=1, allow_inf_nan=False)
+    fact_seed_count: int = Field(default=5, ge=1)
+    passage_seed_weight: float = Field(default=0.05, ge=0, allow_inf_nan=False)
+    beam_width: int = Field(default=8, ge=1)
+    beam_start_candidates: int = Field(default=20, ge=1)
+    beam_bridge_candidates: int = Field(default=20, ge=0)
     rerank_passages: bool = False
     reranker: Literal["none", "llm", "cross-encoder", "compressor"] = "none"
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
@@ -158,12 +158,6 @@ class RetrievalConfig(ConfigModel):
             "response_format": {"type": "json_object"},
         }
     )
-
-    @model_validator(mode="after")
-    def validate_fact_limit(self) -> Self:
-        if self.filtered_triple_k > self.triple_top_k:
-            raise ValueError("filtered_triple_k cannot exceed triple_top_k")
-        return self
 
     @property
     def active_reranker(self) -> Literal["none", "llm", "cross-encoder", "compressor"]:

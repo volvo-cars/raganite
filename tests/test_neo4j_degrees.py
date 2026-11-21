@@ -1,10 +1,8 @@
 """Owned Neo4j stores entity degree and does not read properties it never writes."""
 
 from raganite.backends.base import DocumentGraph, GraphEdge, GraphNode
-from raganite.backends.models import FactHit
 from raganite.backends.neo4j import Neo4jBackend
 from raganite.backends.neo4j.storage import _Neo4jStorage
-from raganite.backends.neo4j.traversal import TraversalSchema
 from raganite.config import Neo4jConfig
 
 
@@ -83,39 +81,6 @@ def _graph() -> DocumentGraph:
             GraphEdge(id="mention", source="paris", target="chunk", type="FROM_CHUNK"),
         ],
     )
-
-
-def test_fact_lookup_reads_the_stored_degree_and_skips_id():
-    backend, driver = _backend()
-    try:
-        backend.search_facts([1.0, 0.0], top_k=1)
-    finally:
-        backend.close()
-    query = next(item for item in driver.queries if "FACT_SUBJECT" in item)
-    assert "subject.id" not in query
-    assert "object.id" not in query
-    assert "COUNT {" not in query
-    assert "semantic_degree" in query
-
-
-def test_expansion_reads_the_stored_degree_and_skips_id():
-    backend, driver = _backend()
-    backend._traversal_schema = TraversalSchema(
-        "Chunk", "__Entity__", "FROM_CHUNK", "Document", "FROM_DOCUMENT"
-    )
-    fact = FactHit(
-        "fact", "rel", "Paris", "CAPITAL", 1.0, "paris", "Paris", 1.0, "france", "France", 1.0
-    )
-    try:
-        backend.expand_facts([fact], depth=1, limit=10)
-    finally:
-        backend.close()
-    query = next(item for item in driver.queries if "expansion_score" in item)
-    assert "seed.id" not in query
-    assert "related.id" not in query
-    assert ".body" not in query
-    assert "COUNT {" not in query
-    assert "semantic_degree" in query
 
 
 def test_writing_a_document_stores_entity_degree_without_counting_chunks():

@@ -13,28 +13,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Filter facts, traverse semantic paths, fuse passages, and rerank with an LLM."""
+"""Shared search, optional reranking, and answering for the beam retriever."""
 
 import asyncio
 import contextvars
 import json
+import logging
+import time
 from collections.abc import Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from threading import BoundedSemaphore
+from threading import BoundedSemaphore, Lock
 from typing import Any
 
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseChatModel
 
 from raganite.backends.base import GraphBackend
-from raganite.backends.models import FactHit
 from raganite.clients.llm import EmbeddingClient, LLMClient
 from raganite.clients.llm.usage import track_run, usage_stage
 from raganite.config import RetrievalConfig
 
+from .fact_walk.graph import FactWalkGraph
 from .models import Answer, FactEvidence, Passage, RetrievalResult
 from .rerank import as_compressor, langchain_cross_encoder, order_by_documents
+
+logger = logging.getLogger(__name__)
 
 ANSWER_PROMPT = (
     "Answer the question using only the passages. "
@@ -42,11 +46,6 @@ ANSWER_PROMPT = (
     "Return only the short answer."
 )
 
-FILTER_PROMPT = (
-    "Rank only the triples that are useful for answering the question. "
-    'Return JSON exactly as {"indices": [1, 2]} with at most the requested '
-    "number of 1-based indices."
-)
 RERANK_PROMPT = (
     "Rank passages by how useful they are for answering the question. "
     'Return JSON exactly as {"indices": [1, 2]} containing every provided '
@@ -91,13 +90,8 @@ def parse_ranked_indices(content: str, *, max_index: int, limit: int) -> list[in
     return indices[:limit] if indices else None
 
 
-class Retriever:
-    """Reference-compatible passage ranking; answer generation stays separate.
-
-    All query state is local and clients remain caller-owned. The backend does
-    indexed fact lookup and scored expansion, never full-graph Python loading.
-    Provider options/retries are delegated to native LangChain model calls.
-    """
+class RetrievalBase:
+    """Shared retrieval operations; clients remain caller-owned."""
 
     def __init__(
         self,
@@ -107,7 +101,6 @@ class Retriever:
         config: RetrievalConfig | None = None,
         *,
         title_by_source: Mapping[str, str] | None = None,
-        triple_filter_prompt: str = FILTER_PROMPT,
         passage_rerank_prompt: str = RERANK_PROMPT,
         passage_reranker: Any | None = None,
     ):
@@ -119,25 +112,21 @@ class Retriever:
         )
         self.llm = llm.model if isinstance(llm, LLMClient) else llm
         self.config = config or RetrievalConfig()
-        if self.llm is None and (
-            self.config.active_reranker == "llm"
-            or (self.config.use_triples and self.config.filter_triples)
-        ):
-            raise ValueError("An LLM is required for triple filtering and passage reranking")
+        if self.llm is None and self.config.active_reranker == "llm":
+            raise ValueError("An LLM is required for passage reranking")
         if self.config.active_reranker == "compressor" and passage_reranker is None:
             raise ValueError(
                 "reranker='compressor' needs a passage reranker with compress_documents"
             )
         self._titles = dict(title_by_source or {})
-        self._filter_prompt = triple_filter_prompt
         self._rerank_prompt = passage_rerank_prompt
         self._passage_reranker = as_compressor(passage_reranker)
         if self._passage_reranker is None and self.config.active_reranker == "cross-encoder":
             self._passage_reranker = as_compressor(
                 langchain_cross_encoder(self.config.reranker_model, self.config.rerank_top_k)
             )
-        if self.config.use_triples:
-            self.backend.prepare()
+        self._fact_graph: tuple[int, FactWalkGraph] | None = None
+        self._fact_graph_lock = Lock()
         self._slots = BoundedSemaphore(self.config.workers)
         self._pool = ThreadPoolExecutor(
             max_workers=self.config.workers, thread_name_prefix="raganite-retrieval"
@@ -156,38 +145,23 @@ class Retriever:
             )
         return response.text.strip()
 
-    def _select_facts(self, query: str, facts: list[FactHit]) -> tuple[list[FactHit], str]:
-        fallback = facts[: self.config.filtered_triple_k]
-        if not facts or not self.config.filter_triples:
-            return fallback, "disabled"
-        candidates = "\n".join(f"{i}. {fact.text}" for i, fact in enumerate(facts, 1))
-        try:
-            content = self._chat_json(
-                self._filter_prompt,
-                f"Question: {query}\n\nCandidate triples:\n{candidates}\n\nSelect and rank at most {self.config.filtered_triple_k}.",
-                stage="retrieval.filter",
-            )
-            indices = parse_ranked_indices(
-                content, max_index=len(facts), limit=self.config.filtered_triple_k
-            )
-            if indices is None:
-                return fallback, "malformed_response_fallback"
-            return [facts[i - 1] for i in indices], "llm"
-        except Exception:
-            return fallback, "request_error_fallback"
-
     def _rerank(
         self, query: str, passages: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], str]:
         candidates = passages[: self.config.rerank_top_k]
         kind = self.config.active_reranker
         if not candidates or kind == "none":
+            logger.info("Reranking disabled for %s passages", len(passages))
             return passages, "disabled"
+        logger.info("Reranking %s of %s passages with %s", len(candidates), len(passages), kind)
         if kind in {"cross-encoder", "compressor"}:
             try:
                 compressed = self._passage_reranker.compress(query, candidates)
+                logger.info("Rerank status %s", kind)
                 return order_by_documents(passages, compressed, top_k=len(candidates)), kind
             except Exception:
+                logger.info("Rerank status request_error_fallback")
+                logger.debug("Passage rerank failed", exc_info=True)
                 return passages, "request_error_fallback"
         text = "\n\n".join(
             f"{i}. {p['title']}\n{p['text'][:4000]}" for i, p in enumerate(candidates, 1)
@@ -202,20 +176,74 @@ class Retriever:
                 content, max_index=len(candidates), limit=len(candidates)
             )
             if indices is None:
+                logger.info("Rerank status malformed_response_fallback")
                 return passages, "malformed_response_fallback"
             selected = set(indices)
             ranked = [candidates[i - 1] for i in indices]
             ranked.extend(p for i, p in enumerate(candidates, 1) if i not in selected)
             ranked.extend(passages[len(candidates) :])
-            return ranked, "llm" if len(indices) == len(candidates) else "llm_partial"
+            status = "llm" if len(indices) == len(candidates) else "llm_partial"
+            logger.info("Rerank status %s", status)
+            return ranked, status
         except Exception:
+            logger.info("Rerank status request_error_fallback")
+            logger.debug("Passage rerank failed", exc_info=True)
             return passages, "request_error_fallback"
+
+    def _loaded_fact_graph(self) -> FactWalkGraph | None:
+        """Read facts and chunks once. Later questions share that matrix."""
+        generation = self.backend.graph_generation
+        cached = self._fact_graph
+        if cached is not None and cached[0] == generation:
+            logger.debug(
+                "Reusing %s fact edges and %s chunks",
+                cached[1].edge_count,
+                cached[1].chunk_count,
+            )
+            return cached[1]
+        with self._fact_graph_lock:
+            generation = self.backend.graph_generation
+            cached = self._fact_graph
+            if cached is not None and cached[0] == generation:
+                logger.debug(
+                    "Reusing %s fact edges and %s chunks",
+                    cached[1].edge_count,
+                    cached[1].chunk_count,
+                )
+                return cached[1]
+            started = time.perf_counter()
+            try:
+                edges = self.backend.fact_edges()
+                chunks = self.backend.chunk_records()
+            except NotImplementedError as exc:
+                logger.info("Backend does not provide a beam snapshot: %s", exc)
+                return None
+            graph = FactWalkGraph.from_edges(edges, chunks)
+            logger.info(
+                "Loaded %s fact edges and %s chunks in %.1fs",
+                graph.edge_count,
+                graph.chunk_count,
+                time.perf_counter() - started,
+            )
+            if self.backend.graph_generation == generation:
+                self._fact_graph = (generation, graph)
+            else:
+                logger.info("Fact graph changed while loading; this copy will not be reused")
+            return graph
+
+    def _beam_passages(self, query: str, embedding: list[float]) -> list[dict[str, Any]]:
+        raise NotImplementedError
 
     def _retrieve(self, query: str) -> list[dict[str, Any]]:
         if not query.strip():
             raise ValueError("Query must not be empty")
         cfg = self.config
         embedding = self.embeddings.embed_query(query)
+        if cfg.use_triples:
+            ranked = self._beam_passages(query, embedding)
+            if ranked:
+                return ranked
+            logger.info("Beam returned no passages; falling back to direct search")
         found = self._search_in_parallel(query, embedding)
         direct = found["direct"]
         passages: dict[str, dict[str, Any]] = {}
@@ -230,10 +258,8 @@ class Retriever:
                     "title": self._title(source),
                     "text": text,
                     "direct_score": 0.0,
-                    "graph_score": 0.0,
                     "lexical_score": 0.0,
                     "direct_rank": None,
-                    "graph_rank": None,
                     "lexical_rank": None,
                     "graph_evidence": [],
                 },
@@ -251,51 +277,9 @@ class Retriever:
                 current = passage(hit.chunk_id, hit.source, hit.text)
                 current["lexical_score"] = max(current["lexical_score"], hit.score)
                 current["lexical_rank"] = min(current["lexical_rank"] or rank, rank)
-        filter_status = "disabled"
-        expanded = []
-        if cfg.use_triples:
-            facts = found["facts"]
-            selected, filter_status = self._select_facts(query, facts)
-            expanded = self.backend.expand_facts(
-                selected,
-                depth=cfg.expansion_depth,
-                limit=cfg.expansion_limit,
-                degree_penalty_weight=cfg.degree_penalty_weight,
-            )
-        seen = set()
-        for row in expanded:
-            if not row.chunk_id:
-                continue
-            current = passage(row.chunk_id, row.source, row.text)
-            key = (
-                row.chunk_id,
-                row.relationship_id,
-                row.seed_entity,
-                row.related_entity,
-                tuple(row.graph_path),
-            )
-            if key in seen:
-                continue
-            seen.add(key)
-            current["graph_score"] += row.expansion_score
-            current["graph_evidence"].append(
-                {
-                    "relationship_id": row.relationship_id,
-                    "fact": row.fact_text,
-                    "seed_entity": row.seed_entity,
-                    "related_entity": row.related_entity,
-                    "path": row.graph_path,
-                    "path_degrees": row.path_degrees,
-                    "score": row.expansion_score,
-                }
-            )
         direct_order = sorted(
             (p for p in passages.values() if p["direct_rank"] is not None),
             key=lambda p: (p["direct_rank"], p["source"]),
-        )
-        graph_order = sorted(
-            (p for p in passages.values() if p["graph_score"] > 0),
-            key=lambda p: (-p["graph_score"], p["source"]),
         )
         lexical_order = sorted(
             (p for p in passages.values() if p["lexical_rank"] is not None),
@@ -304,26 +288,21 @@ class Retriever:
         scores: dict[str, float] = {}
         for weight, order in (
             (1.0, direct_order),
-            (cfg.graph_weight, graph_order),
             (cfg.fulltext_weight, lexical_order),
         ):
             for rank, item in enumerate(order, 1):
                 chunk_id = item["chunk_id"]
                 scores[chunk_id] = scores.get(chunk_id, 0.0) + weight / (cfg.rrf_k + rank)
-        for rank, item in enumerate(graph_order, 1):
-            item["graph_rank"] = rank
         for chunk_id, item in passages.items():
             item.update(
                 score=scores.get(chunk_id, 0.0),
                 fusion_score=scores.get(chunk_id, 0.0),
-                triple_filter_status=filter_status,
             )
         fused = sorted(
             passages.values(),
             key=lambda p: (
                 -p["fusion_score"],
                 p["direct_rank"] or cfg.top_k + 1,
-                p["graph_rank"] or cfg.expansion_limit + 1,
                 p["lexical_rank"] or cfg.top_k + 1,
                 p["title"],
             ),
@@ -427,7 +406,7 @@ class Retriever:
         )
 
     def _search_in_parallel(self, query: str, embedding: list[float]) -> dict[str, Any]:
-        """Run the chunk, full-text, and fact searches at the same time."""
+        """Run chunk vector and full-text searches concurrently."""
         cfg = self.config
         futures: dict[str, Future[Any]] = {
             "direct": self._search_pool.submit(
@@ -437,10 +416,6 @@ class Retriever:
         if cfg.use_fulltext:
             futures["lexical"] = self._search_pool.submit(
                 self.backend.lexical_passages, query, top_k=cfg.top_k
-            )
-        if cfg.use_triples:
-            futures["facts"] = self._search_pool.submit(
-                self.backend.search_facts, embedding, top_k=cfg.triple_top_k
             )
         try:
             return {name: future.result() for name, future in futures.items()}

@@ -77,8 +77,7 @@ def test_session_links_are_searchable_facts(monkeypatch):
             '{"next": "7:55 pm on 9 June, 2023", "previous": "1:56 pm on 8 May, 2023"}'
         )
         assert next_fact in texts
-        found = backend.search_facts([1.0, 0.0], top_k=20)
-        assert any(hit.text == next_fact for hit in found)
+        assert any(edge.text == next_fact for edge in backend.fact_edges())
     finally:
         backend.close()
 
@@ -163,11 +162,14 @@ def test_ordered_sessions_stay_linked_for_the_walk(monkeypatch):
             if node.label == "Session" and node.properties.get("path") == "note.txt"
         ]
         assert sessions_for_note == []
-        ada = next(
-            hit for hit in backend.search_facts([1.0, 0.0], top_k=10) if hit.subject == "Ada"
-        )
-        reached = backend.expand_facts([ada], depth=2, limit=20)
-        assert any("The group met." in row.text for row in reached)
+        from raganite.retrieval.fact_walk.graph import FactWalkGraph
+
+        def assert_reachable():
+            snapshot = FactWalkGraph.from_edges(backend.fact_edges(), backend.chunk_records())
+            walk = snapshot.walk([1.0, 0.0], tau=0.1, damping=0.85, seeds={"Ada": 1.0})
+            assert any("The group met." in row["text"] for row in walk.homes)
+
+        assert_reachable()
 
         indexer.index_documents([sessions[1]], source="conv-26", force=True)
         linked_again = [edge for edge in backend.edges() if edge.type == "NEXT"]
@@ -177,7 +179,6 @@ def test_ordered_sessions_stay_linked_for_the_walk(monkeypatch):
             (backend.namespace, linked_again[0].id),
         ).fetchall()
         assert [row["path"] for row in owners_again] == ["session-1.txt", "session-2.txt"]
-        reached_again = backend.expand_facts([ada], depth=2, limit=20)
-        assert any("The group met." in row.text for row in reached_again)
+        assert_reachable()
     finally:
         backend.close()

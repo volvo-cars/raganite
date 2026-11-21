@@ -33,8 +33,8 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install development dependencies
-        run: uv sync --group dev --extra rerank
-      - name: Lint source, benchmark harness, and tests
+        run: uv sync --group dev
+      - name: Lint source
         run: uv run ruff check src
       - name: Type-check against the minimum supported Python
         run: uv run mypy --python-version 3.11
@@ -59,10 +59,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install development dependencies
-        run: uv sync --group dev --extra rerank
+        run: uv sync --group dev
       - name: Run offline tests
         # Tests use local doubles; no Azure/OpenAI keys or live Neo4j are passed.
-        # The rerank extra is installed so the cross-encoder import path exists.
         run: uv run pytest --junitxml=test-results/pytest.xml
       - name: Upload test results
         if: always()

@@ -18,11 +18,11 @@ Once Git, uv, and package-registry access are configured:
 git clone git@github.com:volvo-cars/raganite.git
 cd raganite
 git switch -c feature/123-short-description
-uv sync --group dev --extra rerank --python 3.13
+uv sync --group dev --python 3.13
 
 # Make the change, add tests, and add a changelog fragment when appropriate.
-uv run ruff format src benchmark tests
-uv run ruff check src benchmark tests
+uv run ruff format src tests
+uv run ruff check src
 uv run mypy
 uv run ty check
 uv run pytest
@@ -66,16 +66,15 @@ git config --global user.email "your-email@example.com"
 From the repository root:
 
 ```sh
-uv sync --group dev --extra rerank --python 3.13
+uv sync --group dev --python 3.13
 uv run python --version
 uv run raganite --help
-uv run raganite-bench --help
 ```
 
 This creates `.venv`, installs Raganite in editable mode, and installs the
-development tools: pytest, pytest-asyncio, Ruff, mypy, and ty. `--extra rerank`
-installs the cross-encoder packages the retrieval tests import. Editable mode means
-your source edits are used without reinstalling for each change.
+development tools: pytest, pytest-asyncio, Ruff, mypy, and ty. The test suite
+does not need the `rerank` extra. Editable mode means your source edits are
+used without reinstalling for each change.
 
 You do not need to activate `.venv` when using `uv run`. In JetBrains or another
 editor, select `.venv/bin/python` as the interpreter on macOS/Linux
@@ -90,7 +89,7 @@ out-of-date lockfile. Review resulting changes and commit `pyproject.toml` and
 
 Unit/regression tests use local stand-ins, in-memory SQLite, and mocked model and
 Neo4j clients. You do **not** need OpenAI/Azure credentials or a running Neo4j
-server to run the test suite. Do not use a live benchmark as a substitute for it.
+server to run the test suite.
 
 For a manual exercise that actually calls a model:
 
@@ -104,7 +103,7 @@ overrides. `init` and `config` do not call a model. `clear` does not call a mode
 either, but **deletes data** and requires confirmation.
 
 Never commit `.env`, provider keys, database passwords, registry tokens, private
-corpora, or generated benchmark results. Do not paste complete provider error
+corpora, or local evaluation results. Do not paste complete provider error
 responses into a PR without reviewing them for sensitive data.
 
 The application CLI loads `.env` from the working directory unless disabled or
@@ -235,14 +234,16 @@ documentation tool, Towncrier is resolved separately for this invocation.
 From the repository root, run:
 
 ```sh
-uv sync --group dev --extra rerank
-uv run ruff format src benchmark tests
+uv sync --group dev
+uv run ruff format src tests
 uv run ruff check src
 uv run ty check src
 uv run pytest
 git diff --check
 ```
 
+CI runs these checks without the `rerank` extra. Install it with
+`uv sync --group dev --extra rerank` when manually testing the local cross-encoder.
 
 ## 9. Review, stage, and commit
 

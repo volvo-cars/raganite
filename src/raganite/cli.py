@@ -51,6 +51,11 @@ def _common_options(command):
         ),
         click.option("--namespace", show_default="default", help="Graph namespace"),
         click.option(
+            "--reranker",
+            type=click.Choice(["none", "llm", "cross-encoder"]),
+            help="Optional passage reranker; defaults to none.",
+        ),
+        click.option(
             "--dimensions",
             type=click.IntRange(min=1),
             show_default="1536",
@@ -94,7 +99,7 @@ def _common_options(command):
             "-v",
             "--verbose",
             count=True,
-            help="Repeat for more detail. -vv logs each caught failure.",
+            help="Repeat for more detail. -v logs each stage. -vv also logs debug detail.",
         ),
     ]
     for option in reversed(options):
@@ -152,6 +157,10 @@ def _overrides(args: SimpleNamespace) -> dict[str, Any]:
     if "workers" in values:
         overrides["indexing"] = {"workers": args.workers}
         overrides["retrieval"] = {"workers": args.workers}
+    if "reranker" in values:
+        overrides.setdefault("retrieval", {})["reranker"] = values["reranker"]
+    if values.get("reranker") == "none":
+        overrides["retrieval"]["rerank_passages"] = False
     for section, model_argument in (("chat", "chat_model"), ("embeddings", "embedding_model")):
         options = {
             field: values[arg]
@@ -230,18 +239,12 @@ def public_error(reason: str) -> str:
 
 
 def _ranking_note(passages: list[dict[str, Any]]) -> str | None:
-    """Name a fact filter or passage rerank when that step ran."""
+    """Name the optional passage rerank when it ran."""
     if not passages:
         return None
     metadata = passages[0].get("metadata") or {}
-    parts = []
-    fact_filter = metadata.get("triple_filter_status")
     rerank = metadata.get("passage_rerank_status")
-    if fact_filter and fact_filter != "disabled":
-        parts.append(f"fact filter: {fact_filter}")
-    if rerank and rerank != "disabled":
-        parts.append(f"passage rerank: {rerank}")
-    return "; ".join(parts) or None
+    return f"passage rerank: {rerank}" if rerank and rerank != "disabled" else None
 
 
 def _print_passages(passages: list[dict[str, Any]]) -> None:
@@ -292,11 +295,7 @@ def _execute(args: SimpleNamespace, config: Any) -> int:
     from raganite.clients.llm.factory import create_chat_client, create_embedding_client
     from raganite.graph import KnowledgeGraph
 
-    needs_llm = (
-        args.command in {"index", "query"}
-        or config.retrieval.active_reranker == "llm"
-        or (config.retrieval.use_triples and config.retrieval.filter_triples)
-    )
+    needs_llm = args.command in {"index", "query"} or config.retrieval.active_reranker == "llm"
     embeddings = create_embedding_client(config.embeddings, dimensions=config.embedding_dimensions)
     llm = create_chat_client(config.chat) if needs_llm else None
     with KnowledgeGraph(config=config, embeddings=embeddings, llm=llm) as graph:

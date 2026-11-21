@@ -1,11 +1,7 @@
 """Run hooks record stage time and token usage from real model calls."""
 
-import asyncio
-import json
 import time
-from pathlib import Path
 
-import pytest
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -61,21 +57,21 @@ def test_registered_hook_totals_time_and_tokens_for_each_stage():
     register_run_hook(factory)
     model = ScriptedChat()
     try:
-        with track_run("benchmark") as report:
-            with usage_stage("benchmark.answer"):
+        with track_run("request") as report:
+            with usage_stage("query.answer"):
                 time.sleep(0.02)
                 model.invoke("Hello")
-            with usage_stage("benchmark.judge"):
-                model.invoke("Judge")
+            with usage_stage("request.summary"):
+                model.invoke("Summarize")
             with track_run("retrieval"):
                 with usage_stage("retrieval.filter"):
                     model.invoke("Filter")
     finally:
         unregister_run_hook(factory)
 
-    assert seen == ["benchmark", "benchmark", "benchmark"]
-    answer = report.stages["benchmark.answer"]
-    judge = report.stages["benchmark.judge"]
+    assert seen == ["request", "request", "request"]
+    answer = report.stages["query.answer"]
+    summary = report.stages["request.summary"]
     filtered = report.stages["retrieval.filter"]
     assert answer.calls == 1
     assert answer.input_tokens == 8
@@ -85,7 +81,7 @@ def test_registered_hook_totals_time_and_tokens_for_each_stage():
     assert answer.output_token_details == {"audio": 0, "reasoning": 0}
     assert answer.elapsed_seconds >= 0.02
     assert answer.model_seconds >= 0
-    assert judge.calls == 1
+    assert summary.calls == 1
     assert filtered.calls == 1
     assert report.total_tokens == 54
     assert report.elapsed_seconds >= answer.elapsed_seconds
@@ -126,7 +122,7 @@ def test_retrieval_result_reports_rerank_token_usage():
         backend,
         FixedEmbeddings(),
         ScriptedChat(),
-        RetrievalConfig(use_triples=False, filter_triples=False, rerank_passages=True, workers=1),
+        RetrievalConfig(use_triples=False, rerank_passages=True, workers=1),
     )
     try:
         result = retriever.retrieve("What is the capital of France?")
@@ -138,31 +134,3 @@ def test_retrieval_result_reports_rerank_token_usage():
     finally:
         retriever.close()
         backend.close()
-
-
-@pytest.mark.asyncio
-async def test_benchmark_row_includes_stage_usage(tmp_path: Path):
-    from benchmark.locomo_flow import _answer_one
-
-    class Passages:
-        async def aretrieve(self, question: str):
-            with usage_stage("retrieval.rerank"):
-                await ScriptedChat().ainvoke(question)
-            return []
-
-    output = tmp_path / "rows.jsonl"
-    await _answer_one(
-        "sample",
-        0,
-        {"question": "Where?", "answer": "Paris", "category": 2, "evidence": []},
-        Passages(),
-        answer_model=ScriptedChat(),
-        output=output,
-        lock=asyncio.Lock(),
-        done=set(),
-        llm_judge=False,
-    )
-    row = json.loads(output.read_text(encoding="utf-8"))
-    assert row["usage"]["stages"]["retrieval.rerank"]["calls"] == 1
-    assert row["usage"]["stages"]["benchmark.answer"]["total_tokens"] == 18
-    assert row["usage"]["total_tokens"] == 36

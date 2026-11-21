@@ -16,6 +16,7 @@ After `uv sync`, run commands with `uv run raganite`. The entry point is `ragani
 | `--sqlite-path PATH` | SQLite file. Default `.raganite/graph.sqlite3` |
 | `--neo4j-uri URI` | Bolt URI. Default `bolt://localhost:7687` |
 | `--namespace NAME` | Graph namespace. Default `default` |
+| `--reranker none\|llm\|cross-encoder` | Optional second-stage passage reranker. Default `none` |
 | `--dimensions N` | Embedding length. Default `1536`. Must match the model and the stored vectors |
 | `--workers N` | Indexing and retrieval workers. Default is the available CPU count |
 | `--provider openai\|azure-openai\|huggingface\|huggingface-endpoint` | Provider for both the chat and embedding clients. Default `openai`. `huggingface` is local. `huggingface-endpoint` is hosted. Set `RAGANITE_CHAT__PROVIDER` and `RAGANITE_EMBEDDINGS__PROVIDER` separately when the two roles differ |
@@ -67,9 +68,9 @@ The command prints a JSON report, including `usage` for tokens and elapsed time.
 raganite retrieve QUESTION [--top-k N] [--format text|json]
 ```
 
-Returns passages. Fact evidence is in the JSON output. It does not generate an answer. The store is opened read-only.
+Returns passages without generating an answer. The store is opened read-only.
 
-`--top-k` defaults to `5`. `--format text` prints rank, title, source, score, and text for each passage. When a fact filter or a passage rerank ran, that status is printed before the passages. `--format json` prints those passages as objects and adds `evidence` and metadata. The JSON list does not include the retrieval usage report. Read `RetrievalResult.usage` in Python for token and timing totals.
+`--top-k` defaults to `5`. `--format text` prints rank, title, source, score, and text for each passage. If passage reranking ran, its status appears before the passages. `--format json` prints those passages as objects and adds `evidence` and metadata. Default retrieval uses facts internally but leaves `evidence` empty. The JSON list does not include the retrieval usage report. Read `RetrievalResult.usage` in Python for token and timing totals.
 
 ## `query`
 

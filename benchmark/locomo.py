@@ -21,13 +21,27 @@ def question_ids(data: list[dict], limit: int) -> list[str]:
 
 
 def _metrics(rows: list[dict]) -> dict[str, float | int]:
-    return {
+    result = {
         "questions": len(rows),
         "qa_f1": mean(row["qa_f1"] for row in rows),
         "exact_match": mean(row["exact_match"] for row in rows),
         "evidence_recall_at_5": mean(row["evidence_recall_at_5"] for row in rows),
         "evidence_recall_at_10": mean(row["evidence_recall_at_10"] for row in rows),
     }
+    for metric in (
+        "evidence_recall_at_20",
+        "evidence_recall_in_answer_context",
+        "answer_context_chunks",
+        "beam_start_candidate_count",
+        "beam_bridge_candidate_count",
+        "beam_candidate_count",
+    ):
+        if all(metric in row for row in rows):
+            result[metric] = mean(row[metric] for row in rows)
+    judged = [row["llm_judge"] for row in rows if row.get("llm_judge") is not None]
+    if judged:
+        result.update(llm_judge=mean(judged), judged_questions=len(judged))
+    return result
 
 
 def session_documents(sample: dict) -> list[Document]:
@@ -83,9 +97,20 @@ def selected_samples(data: list[dict], questions: int) -> list[tuple[dict, list[
     return chosen
 
 
-def score_locomo(data_path: Path, results_path: Path, questions: int) -> str:
+def score_locomo(
+    data_path: Path, results_path: Path, questions: int, *, mem0: bool = False
+) -> str:
     data = json.loads(data_path.read_text(encoding="utf-8"))
-    selected = question_ids(data, questions)
+    if mem0:
+        from benchmark.locomo_mem0 import non_adversarial_samples
+
+        selected = [
+            f"{sample['sample_id']}:{index}"
+            for sample, pairs in non_adversarial_samples(data, questions)
+            for index, _ in pairs
+        ]
+    else:
+        selected = question_ids(data, questions)
     if len(selected) < questions:
         raise ValueError(f"Dataset has {len(selected)} questions, which is below {questions}")
     found: dict[str, dict] = {}
@@ -110,4 +135,7 @@ def score_locomo(data_path: Path, results_path: Path, questions: int) -> str:
         "overall": _metrics(rows),
         "by_category": {name: _metrics(items) for name, items in sorted(grouped.items())},
     }
+    non_adversarial = [row for row in rows if row["category_name"] != "adversarial"]
+    if non_adversarial:
+        report["non_adversarial"] = _metrics(non_adversarial)
     return json.dumps(report, indent=2)

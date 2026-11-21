@@ -57,7 +57,7 @@ class RetrievalResult(list[Passage]):
     """Passages from one retrieval, with that run's timing and token totals.
 
     The result is still a list, so existing callers can index and iterate it.
-    ``usage`` stays the retrieval run even when a benchmark run is wrapped around it.
+    ``usage`` describes retrieval even when it is part of a larger request.
     """
 
     usage: UsageReport

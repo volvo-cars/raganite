@@ -54,7 +54,7 @@ with KnowledgeGraph(embeddings=embeddings, llm=chat) as graph:
 | Index my own files | [Indexing](docs/guides/indexing.md) |
 | Change the database or model provider | [Neo4j setup](docs/guides/neo4j.md), [Model providers](docs/guides/providers.md) |
 | Configure search and answer generation | [Search and retrieval](docs/guides/retrieval.md), [Configuration](docs/guides/configuration.md) |
-| See the results or run an evaluation | [Benchmark results](docs/guides/benchmarking.md), [Run the benchmarks](docs/guides/run-benchmarks.md) |
+| See the results or run an evaluation | [Benchmark results](docs/explanation/benchmark-results.md), [Run the benchmarks](docs/explanation/benchmark-results.md#run-the-benchmarks-yourself) |
 | Look up a class or command | [Python API](docs/reference/python-api.md), [CLI reference](docs/reference/cli.md) |
 
 ## License

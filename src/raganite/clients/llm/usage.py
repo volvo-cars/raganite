@@ -48,7 +48,7 @@ class StageUsage:
 
 @dataclass
 class UsageReport:
-    """Token and timing totals for one indexing, retrieval, or benchmark run."""
+    """Token and timing totals for a tracked operation."""
 
     name: str = ""
     elapsed_seconds: float = 0.0
@@ -300,7 +300,7 @@ def usage_stage(name: str) -> Generator[None, None, None]:
 
 
 def combine_usage(payloads: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Sum usage dictionaries, such as one benchmark row per question."""
+    """Sum usage dictionaries across tracked operations."""
     combined = UsageReport(name="combined")
     for payload in payloads:
         child = UsageReport(

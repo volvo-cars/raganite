@@ -59,4 +59,4 @@ An empty or blank question raises `ValueError`.
 
 ## What you did
 
-You built one namespace of a knowledge graph from files, then read passages back out of it. Indexing needs a chat model and an embedding model. Retrieval needs the embedding model. The default path does not ask the chat model to filter facts or rerank passages. `query` uses the chat model once, to write the answer.
+You built one namespace of a knowledge graph from files, then read passages back out of it. Indexing needs a chat model and an embedding model. Default retrieval uses only the embedding model. With optional reranking off, `query` calls the chat model once, to write the answer.

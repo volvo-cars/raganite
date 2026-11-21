@@ -253,10 +253,12 @@ class _Neo4jStorage(GraphBackend):
         }
 
         def replace(tx):
-            tx.run(
-                "MATCH (d:RaganiteOwner {namespace:$namespace, source:$source, path:$path}) DETACH DELETE d",
+            previous = tx.run(
+                "MATCH (d:RaganiteOwner {namespace:$namespace, source:$source, path:$path}) "
+                "OPTIONAL MATCH (d)-[:OWNS_NODE]->(n:RaganiteNode {namespace:$namespace, kind:'entity'}) "
+                "WITH d, collect(n.raganite_id) AS ids DETACH DELETE d RETURN ids",
                 params,
-            ).consume()
+            ).single()
             tx.run(
                 "CREATE (:RaganiteOwner {namespace:$namespace, source:$source, path:$path, content_hash:$hash})",
                 params,
@@ -272,7 +274,7 @@ class _Neo4jStorage(GraphBackend):
                 }
                 tx.run(
                     "MERGE (n:RaganiteNode {namespace:$namespace, raganite_id:$id}) "
-                    f"SET n:{labels}, n += $scalar, n.namespace=$namespace, n.raganite_id=$id, "
+                    f"SET n = $scalar, n:{labels}, n.namespace=$namespace, n.raganite_id=$id, "
                     "n.kind=$kind, n.label=$label, n.properties_json=$properties, n.embedding=$embedding "
                     "WITH n MATCH (d:RaganiteOwner {namespace:$namespace, source:$source, path:$path}) "
                     "MERGE (d)-[:OWNS_NODE]->(n)",
@@ -306,12 +308,16 @@ class _Neo4jStorage(GraphBackend):
                     },
                 ).consume()
             self._cleanup(tx)
-            entity_ids = [node.id for node in graph.nodes if node.kind == "entity"]
+            entity_ids = sorted(
+                {node.id for node in graph.nodes if node.kind == "entity"}
+                | set(previous.get("ids", ()) if previous else ())
+            )
             if entity_ids:
                 self._refresh_degrees(tx, entity_ids)
 
         with self._driver.session(database=self.config.database) as session:
             session.execute_write(replace)
+        self.note_graph_write()
 
     def store_shared_edges(
         self, edges: Sequence[tuple[GraphEdge, Sequence[tuple[str, str]]]]
@@ -358,6 +364,7 @@ class _Neo4jStorage(GraphBackend):
 
         with self._driver.session(database=self.config.database) as session:
             session.execute_write(write)
+        self.note_graph_write()
 
     def has_sequence(self, source: str) -> bool:
         rel = quote_identifier(self.topology.next_session)
@@ -418,6 +425,7 @@ class _Neo4jStorage(GraphBackend):
 
         with self._driver.session(database=self.config.database) as session:
             session.execute_write(write)
+        self.note_graph_write()
 
     def store_shared_nodes(
         self, nodes: Sequence[tuple[GraphNode, Sequence[tuple[str, str]]]]
@@ -437,8 +445,10 @@ class _Neo4jStorage(GraphBackend):
                 }
                 tx.run(
                     "MERGE (n:RaganiteNode {namespace:$namespace, raganite_id:$id}) "
-                    f"SET n:{labels}, n += $scalar, n.namespace=$namespace, n.raganite_id=$id, "
-                    "n.kind=$kind, n.label=$label, n.properties_json=$properties, n.embedding=$embedding",
+                    "WITH n, n.semantic_degree AS degree "
+                    f"SET n = $scalar, n:{labels}, n.namespace=$namespace, n.raganite_id=$id, "
+                    "n.kind=$kind, n.label=$label, n.properties_json=$properties, n.embedding=$embedding, "
+                    "n.semantic_degree=degree",
                     {
                         "namespace": self.namespace,
                         "id": node.id,
@@ -464,6 +474,7 @@ class _Neo4jStorage(GraphBackend):
 
         with self._driver.session(database=self.config.database) as session:
             session.execute_write(write)
+        self.note_graph_write()
 
     def document_hash(self, source: str, path: str) -> str | None:
         if self.layout == "native":
@@ -497,7 +508,9 @@ class _Neo4jStorage(GraphBackend):
             return row["deleted"] if row else 0
 
         with self._driver.session(database=self.config.database) as session:
-            return session.execute_write(delete)
+            deleted = session.execute_write(delete)
+        self.note_graph_write()
+        return deleted
 
     def nodes(
         self,

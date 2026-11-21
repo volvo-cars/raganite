@@ -2,7 +2,6 @@
 
 import logging
 
-from benchmark.cli import main as benchmark_main
 from click.testing import CliRunner
 from langchain_core.documents import Document
 
@@ -38,8 +37,8 @@ def test_a_caught_indexing_failure_is_logged(caplog):
                 source="conv-26",
             )
         assert report.failed_files == [("conv-26/session_011.txt", "bad extraction")]
-        assert "conv-26/session_011.txt" in caplog.text
-        assert "bad extraction" in caplog.text
+        assert "Indexing batch 1-1 of 1" in caplog.text
+        assert "Failed conv-26/session_011.txt: bad extraction" in caplog.text
     finally:
         backend.close()
 
@@ -76,9 +75,6 @@ def test_vv_enables_debug_and_the_default_stays_quiet():
 
 
 def test_cli_help_documents_vv():
-    benchmark = CliRunner().invoke(benchmark_main, ["locomo", "run", "--help"])
     raganite = CliRunner().invoke(raganite_main, ["index", "--help"])
-    assert benchmark.exit_code == 0
     assert raganite.exit_code == 0
-    assert "-v, --verbose" in benchmark.output
     assert "-v, --verbose" in raganite.output

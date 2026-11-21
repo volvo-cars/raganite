@@ -65,6 +65,18 @@ def paper_prompt(context: str, question: dict) -> str:
     return context + "\n\n" + template.replace("{}", asked_question(question), 1)
 
 
+def memory_prompt(template: str, chunks: list[str], question: str) -> str:
+    """Render a Mem0-format template without splitting mixed-speaker chunks."""
+    values = {
+        "speaker_1_user_id": "both speakers (shared transcript)",
+        "speaker_2_user_id": "additional speaker-specific memories",
+        "speaker_1_memories": json.dumps(chunks, indent=4, ensure_ascii=False),
+        "speaker_2_memories": "[]",
+        "question": question,
+    }
+    return re.sub(r"\{\{\s*(\w+)\s*\}\}", lambda match: values[match[1]], template)
+
+
 def judge_prompt(question: str, gold: str, prediction: str) -> str:
     return (
         JUDGE_PROMPT.replace("{question}", question)

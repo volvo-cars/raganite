@@ -42,7 +42,14 @@ DEFAULT_PATTERNS = (
 def default_schema() -> GraphSchema:
     """Return an independent copy of the sample's default code-oriented schema."""
     return GraphSchema(
-        node_types=tuple(NodeType(label=label) for label in DEFAULT_ENTITIES),
+        node_types=tuple(
+            NodeType(
+                label=label,
+                properties=[PropertyType(name="name", type="STRING")],
+                additional_properties=True,
+            )
+            for label in DEFAULT_ENTITIES
+        ),
         relationship_types=tuple(RelationshipType(label=label) for label in DEFAULT_RELATIONS),
         patterns=tuple(Pattern(source=s, relationship=r, target=t) for s, r, t in DEFAULT_PATTERNS),
     )

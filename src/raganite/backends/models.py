@@ -13,10 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Storage-neutral records for fact search and scored graph expansion."""
+"""Storage-neutral records for passage search and beam snapshots."""
 
-import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -28,36 +27,23 @@ class PassageHit:
 
 
 @dataclass(frozen=True)
-class FactHit:
-    fact_id: str
-    relationship_id: str
+class FactEdge:
+    """One directed fact, with the embedding of its sentence."""
+
+    source: str
+    target: str
     text: str
     relation_type: str
-    score: float
-    subject_id: str
-    subject: str
-    subject_degree: float
-    object_id: str
-    object: str
-    object_degree: float
+    relationship_id: str
+    embedding: tuple[float, ...]
 
 
 @dataclass(frozen=True)
-class GraphExpansion:
+class ChunkRecord:
+    """A stored chunk, its document title, and its owning documents' entity names."""
+
     chunk_id: str
-    source: str
+    path: str
     text: str
-    expansion_score: float
-    relationship_id: str
-    fact_text: str
-    seed_entity: str
-    related_entity: str
-    graph_path: list[str] = field(default_factory=list)
-    path_degrees: list[float] = field(default_factory=list)
-
-
-def validate_expansion(depth: int, limit: int, degree_penalty_weight: float) -> None:
-    if not 0 <= depth <= 5 or limit < 1:
-        raise ValueError("Expansion depth must be 0–5 and limit must be positive")
-    if not math.isfinite(degree_penalty_weight) or degree_penalty_weight < 0:
-        raise ValueError("Degree penalty weight must be finite and non-negative")
+    title: str = ""
+    entities: tuple[str, ...] = ()

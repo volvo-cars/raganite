@@ -1,7 +1,6 @@
 """Benchmark commands: ``python -m benchmark``."""
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +17,7 @@ def _verbose_option(command):
         "-v",
         "--verbose",
         count=True,
-        help="Repeat for more detail. -vv logs each caught failure.",
+        help="Repeat for more detail. -v logs each stage. -vv also logs debug detail.",
     )(command)
 
 
@@ -28,19 +27,13 @@ def _use_verbosity(ctx: click.Context, verbose: int) -> None:
 
 
 def run_hotpotqa(options: dict[str, Any]) -> None:
-    """Compare saved results locally without the removed standalone harness."""
-    from benchmark.hotpotqa_flow import load_benchmark_env
+    """Compare saved results on matching questions."""
     from benchmark.metrics import compare
     from benchmark.results import read_rows, save
 
-    load_benchmark_env()
     baseline_path = options.get("baseline")
     if baseline_path is None:
-        reference = os.getenv("HOTPOTQA_REFERENCE_ROOT")
-        if not reference:
-            raise click.UsageError("--compare-only requires --baseline or HOTPOTQA_REFERENCE_ROOT")
-        name = os.getenv("HOTPOTQA_BASELINE", "avesta_triple_kg_hotpotqa_1000")
-        baseline_path = Path(reference) / "results" / f"{name}.jsonl"
+        raise click.UsageError("--compare-only requires --baseline")
     completed = read_rows(Path(options["output"]))
     queries_path = Path(options["data_dir"]) / "hotpotqa.json"
     queries = json.loads(queries_path.read_text(encoding="utf-8"))[: options["questions"]]
@@ -87,24 +80,12 @@ def main(ctx: click.Context, verbose: int) -> None:
     help="Documents indexed at once.",
 )
 @click.option(
-    "--mode",
-    type=click.Choice(["full", "direct", "triple-unfiltered"]),
-    default="full",
-    show_default=True,
-    help="full ranks facts and passages. direct skips facts. triple-unfiltered skips the fact filter and the passage rerank.",
-)
-@click.option(
-    "--reranker",
-    type=click.Choice(["none", "llm", "cross-encoder"]),
-    default=None,
-    help="Passage reranker. full mode uses the chat model unless this is set.",
-)
-@click.option(
     "--backend", type=click.Choice(["sqlite", "neo4j"]), default="sqlite", show_default=True
 )
 @click.option(
     "--skip-index", is_flag=True, help="Reuse the selected graph instead of indexing the corpus."
 )
+@click.option("--namespace", default="hotpotqa", show_default=True, help="Owned graph namespace.")
 @click.option(
     "--data-dir",
     type=click.Path(path_type=Path),
@@ -118,31 +99,16 @@ def main(ctx: click.Context, verbose: int) -> None:
     default=Path("benchmark/data/hotpotqa.sqlite3"),
     show_default=True,
 )
-@click.option("--neo4j-uri", default="bolt://localhost:7687", show_default=True)
+@click.option("--neo4j-uri", envvar="NEO4J_URI", default="bolt://127.0.0.1:7690", show_default=True)
 @click.option("--neo4j-username", default="neo4j", show_default=True)
 @click.option("--neo4j-password", default="raganite-local", show_default=True)
 @click.option("--neo4j-database", default="neo4j", show_default=True)
-@click.option(
-    "--neo4j-layout",
-    type=click.Choice(["owned", "native"]),
-    default="owned",
-    show_default=True,
-    help="owned writes a Raganite graph. native reads an existing database.",
-)
 @click.option(
     "--dimensions",
     type=click.IntRange(min=1),
     default=None,
     help="Embedding width. Default follows the configured model.",
 )
-@click.option("--triple-top-k", type=click.IntRange(min=1), default=30, show_default=True)
-@click.option("--filtered-triple-k", type=click.IntRange(min=1), default=8, show_default=True)
-@click.option("--expansion-depth", type=click.IntRange(0, 5), default=2, show_default=True)
-@click.option("--expansion-limit", type=click.IntRange(min=1), default=5000, show_default=True)
-@click.option("--degree-penalty-weight", type=float, default=0.25, show_default=True)
-@click.option("--graph-weight", type=float, default=1.0, show_default=True)
-@click.option("--rrf-k", type=click.IntRange(min=1), default=60, show_default=True)
-@click.option("--rerank-top-k", type=click.IntRange(min=1), default=20, show_default=True)
 @click.option(
     "--top-k",
     type=click.IntRange(min=1),
@@ -167,7 +133,7 @@ def main(ctx: click.Context, verbose: int) -> None:
 @click.option(
     "--baseline",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Baseline JSONL for --compare-only; otherwise use HOTPOTQA_REFERENCE_ROOT/HOTPOTQA_BASELINE.",
+    help="Baseline JSONL for --compare-only.",
 )
 @click.option(
     "--compare-only",
@@ -217,9 +183,10 @@ def locomo() -> None:
     show_default=True,
     help="First questions in conversation order.",
 )
-def locomo_score(data: Path, results_path: Path, questions: int) -> None:
+@click.option("--mem0", is_flag=True, help="Score the non-adversarial Mem0 question set.")
+def locomo_score(data: Path, results_path: Path, questions: int, mem0: bool) -> None:
     """Print category scores for the first LoCoMo questions already in a results file."""
-    click.echo(score_locomo(data, results_path, questions))
+    click.echo(score_locomo(data, results_path, questions, mem0=mem0))
 
 
 @locomo.command("run")
@@ -239,11 +206,29 @@ def locomo_score(data: Path, results_path: Path, questions: int) -> None:
 )
 @click.option("--top-k", type=click.IntRange(min=1), default=20, show_default=True)
 @click.option(
+    "--qa-top-k", type=click.IntRange(min=1), default=5, show_default=True,
+    help="Maximum number of retrieved chunks sent to the answer model.",
+)
+@click.option(
+    "--mem0", is_flag=True, help="Use the pinned Mem0 prompts and skip adversarial questions."
+)
+@click.option(
+    "--answer-template",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Use a Mem0-format answer template instead of the original LoCoMo prompt.",
+)
+@click.option(
+    "--mem0-judge-template",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Use the Mem0 evaluation protocol; --questions counts non-adversarial questions.",
+)
+@click.option(
     "--backend", type=click.Choice(["sqlite", "neo4j"]), default="sqlite", show_default=True
 )
 @click.option(
     "--skip-index", is_flag=True, help="Reuse each conversation graph instead of indexing it."
 )
+@click.option("--namespace-prefix", default="", help="Prefix the owned conversation namespaces.")
 @click.option(
     "--data-dir", type=click.Path(path_type=Path), default=Path("benchmark/data"), show_default=True
 )
@@ -253,17 +238,10 @@ def locomo_score(data: Path, results_path: Path, questions: int) -> None:
     default=Path("benchmark/data/locomo.sqlite3"),
     show_default=True,
 )
-@click.option("--neo4j-uri", default="bolt://localhost:7687", show_default=True)
+@click.option("--neo4j-uri", envvar="NEO4J_URI", default="bolt://127.0.0.1:7690", show_default=True)
 @click.option("--neo4j-username", default="neo4j", show_default=True)
 @click.option("--neo4j-password", default="raganite-local", show_default=True)
 @click.option("--neo4j-database", default="neo4j", show_default=True)
-@click.option(
-    "--neo4j-layout",
-    type=click.Choice(["owned", "native"]),
-    default="owned",
-    show_default=True,
-    help="owned writes a Raganite graph. native reads an existing database.",
-)
 @click.option("--dimensions", type=click.IntRange(min=1), default=None)
 @click.option(
     "--schema-mode",

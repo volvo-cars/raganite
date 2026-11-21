@@ -1,9 +1,9 @@
 """Download the HotpotQA release, index it, then score the first questions."""
 
 import asyncio
+import hashlib
 import json
 import logging
-import os
 from dataclasses import asdict
 from pathlib import Path
 
@@ -53,62 +53,20 @@ def load_benchmark_env() -> None:
 
 
 def _clients(dimensions: int, *, answer_max_tokens: int = 64):
-    load_benchmark_env()
-    if os.getenv("AZURE_OPENAI_API_KEY"):
-        import httpx
-
-        from raganite.clients.llm import AzureOpenAIEmbeddingClient, AzureOpenAILLMClient
-
-        timeout = httpx.Timeout(
-            float(os.getenv("AZURE_OPENAI_READ_TIMEOUT", "300")),
-            connect=float(os.getenv("AZURE_OPENAI_CONNECT_TIMEOUT", "30")),
-        )
-        verify = os.getenv("AZURE_OPENAI_DISABLE_SSL_VERIFY", "false").lower() not in {
-            "1",
-            "true",
-            "yes",
-        }
-        sync_http = httpx.Client(timeout=timeout, verify=verify)
-        async_http = httpx.AsyncClient(timeout=timeout, verify=verify)
-        common = {
-            "azure_endpoint": os.environ["AZURE_OPENAI_ENDPOINT"],
-            "api_key": os.environ["AZURE_OPENAI_API_KEY"],
-            "http_client": sync_http,
-            "http_async_client": async_http,
-            "timeout": timeout,
-            "max_retries": 4,
-        }
-        embeddings = AzureOpenAIEmbeddingClient(
-            api_version=os.environ["AZURE_API_EMBEDDING_API_VERSION"],
-            model=os.environ["AZURE_EMBEDDING_DEPLOYMENT"],
-            dimensions=dimensions,
-            check_embedding_ctx_length=False,
-            **common,
-        )
-        ranking = AzureOpenAILLMClient(
-            api_version=os.environ["AZURE_OPENAI_API_VERSION"],
-            azure_deployment=os.environ["AZURE_OPENAI_DEPLOYMENT"],
-            model=os.environ["AZURE_OPENAI_DEPLOYMENT"],
-            use_responses_api=False,
-            **common,
-        )
-        answer = AzureOpenAILLMClient(
-            api_version=os.environ["AZURE_OPENAI_API_VERSION"],
-            azure_deployment=os.environ["AZURE_OPENAI_DEPLOYMENT"],
-            model=os.environ["AZURE_OPENAI_DEPLOYMENT"],
-            temperature=0,
-            max_tokens=answer_max_tokens,
-            use_responses_api=False,
-            **common,
-        ).model
-        return embeddings, ranking, answer, (sync_http, async_http)
     from raganite.clients.llm.factory import create_chat_client, create_embedding_client
     from raganite.config.loading import load_config
 
     settings = load_config()
     ranking = create_chat_client(settings.chat)
     embeddings = create_embedding_client(settings.embeddings, dimensions=dimensions)
-    return embeddings, ranking, ranking.model, ()
+    answer = ranking
+    if settings.chat.provider in {"openai", "azure-openai"}:
+        answer = create_chat_client(
+            settings.chat.model_copy(
+                update={"options": {**settings.chat.options, "temperature": 0, "max_tokens": answer_max_tokens}}
+            )
+        )
+    return embeddings, ranking, answer.model
 
 
 def _rate_limited(exc: BaseException) -> bool:
@@ -158,6 +116,12 @@ async def evaluate_hotpotqa(
 ) -> dict:
     output.parent.mkdir(parents=True, exist_ok=True)
     completed = read_rows(output) if output.exists() else {}
+    logger.info(
+        "Answering %s questions with concurrency %s (%s already stored)",
+        len(queries),
+        concurrency,
+        len(completed),
+    )
     failures, lock = [], asyncio.Lock()
     semaphore = asyncio.Semaphore(concurrency)
     pause = RateLimitPause()
@@ -184,7 +148,8 @@ async def evaluate_hotpotqa(
                     )
                     return
                 except Exception as exc:
-                    logger.debug("%s failed: %s", query["_id"], exc, exc_info=True)
+                    logger.info("%s failed: %s", query["_id"], type(exc).__name__)
+                    logger.debug("%s failed", query["_id"], exc_info=True)
                     if _rate_limited(exc) and attempt < 7:
                         await pause.trigger(query["_id"])
                         continue
@@ -222,6 +187,7 @@ async def _score_hotpot_question(
     from raganite.clients.llm.usage import track_run, usage_stage
 
     with track_run("benchmark") as usage:
+        logger.info("%s: retrieving", query["_id"])
         rows = [
             {
                 "source": passage.source,
@@ -232,6 +198,7 @@ async def _score_hotpot_question(
             for passage in await retriever.aretrieve(query["question"])
         ]
         passages = passages_from_rows(rows, title_map, top_k)
+        logger.info("%s: retrieved %s passages", query["_id"], len(passages))
         gold_titles = sorted({title for title, _ in query["supporting_facts"]})
         answers = query["answer"] if isinstance(query["answer"], list) else [query["answer"]]
         item = {
@@ -243,6 +210,7 @@ async def _score_hotpot_question(
             "retrieval_metrics": retrieval_metrics([p["title"] for p in passages], gold_titles),
         }
         if answer_model is not None:
+            logger.info("%s: answering from the top %s passages", query["_id"], qa_top_k)
             context = "\n\n".join(
                 f"[{i}] {p['title']}\n{p['text']}" for i, p in enumerate(passages[:qa_top_k], 1)
             )
@@ -275,33 +243,30 @@ async def _score_hotpot_question(
 def run_hotpotqa_benchmark(options) -> None:
     """Download, index, and evaluate. ``--skip-index`` reuses the selected store."""
     from raganite.config import ChunkingConfig, IndexingConfig, RetrievalConfig
+    from raganite.config.loading import load_config
     from raganite.graph import KnowledgeGraph
     from raganite.retrieval import Retriever
 
     load_benchmark_env()
+    namespace = options.get("namespace", "hotpotqa")
+    if options["qa_top_k"] > options["top_k"]:
+        raise ValueError("--qa-top-k must be no larger than --top-k")
+    logger.info(
+        "HotpotQA: %s questions, backend %s, index workers %s, concurrency %s",
+        options["questions"],
+        options["backend"],
+        options["index_workers"],
+        options["concurrency"],
+    )
     data_dir = Path(options["data_dir"])
     queries, corpus = load_hotpotqa(data_dir)
     selected = queries[: options["questions"]]
     documents, title_map = corpus_documents(corpus)
     dimensions = options["dimensions"]
-    if dimensions is None:
-        dimensions = int(
-            os.getenv("AVESTA_EMBEDDING_DIM") or os.getenv("RAGANITE_EMBEDDING_DIMENSIONS") or 1536
-        )
+    dimensions = dimensions or load_config().embedding_dimensions
     retrieval = RetrievalConfig(
         workers=options["concurrency"],
         top_k=options["top_k"],
-        triple_top_k=options["triple_top_k"],
-        filtered_triple_k=options["filtered_triple_k"],
-        expansion_depth=options["expansion_depth"],
-        expansion_limit=options["expansion_limit"],
-        degree_penalty_weight=options["degree_penalty_weight"],
-        graph_weight=options["graph_weight"],
-        rrf_k=options["rrf_k"],
-        rerank_top_k=options["rerank_top_k"],
-        use_triples=options["mode"] != "direct",
-        filter_triples=options["mode"] == "full",
-        reranker=options.get("reranker") or ("llm" if options["mode"] == "full" else "none"),
     )
     config = store_config(
         options["backend"],
@@ -311,12 +276,8 @@ def run_hotpotqa_benchmark(options) -> None:
         password=options["neo4j_password"],
         database=options["neo4j_database"],
         dimensions=dimensions,
-        namespace="hotpotqa",
+        namespace=namespace,
         retrieval=retrieval,
-        layout=options.get("neo4j_layout", "owned"),
-        vector_index=options.get("vector_index"),
-        fulltext_index=options.get("fulltext_index"),
-        fact_vector_index=options.get("fact_vector_index"),
     )
     config = config.model_copy(
         update={
@@ -326,7 +287,35 @@ def run_hotpotqa_benchmark(options) -> None:
             )
         }
     )
-    embeddings, ranking, answer, http_clients = _clients(dimensions)
+    output = Path(options["output"])
+    system = (PROMPTS / "answer_hotpot_question.txt").read_text(encoding="utf-8")
+    settings = load_config()
+    protocol = {
+        "backend": options["backend"],
+        "questions": options["questions"],
+        "top_k": options["top_k"],
+        "qa_top_k": options["qa_top_k"],
+        "dimensions": dimensions,
+        "namespace": namespace,
+        "retrieval_only": options["retrieval_only"],
+        "chat_provider": settings.chat.provider,
+        "chat_model": settings.chat.model,
+        "embedding_provider": settings.embeddings.provider,
+        "embedding_model": settings.embeddings.model,
+        "answer_prompt_sha256": hashlib.sha256(system.encode()).hexdigest(),
+    }
+    manifest = output.with_suffix(".manifest.json")
+    if output.exists() and (
+        not manifest.exists()
+        or json.loads(manifest.read_text(encoding="utf-8")).get("protocol") != protocol
+    ):
+        raise ValueError("Existing output uses another protocol; select a new output path")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if not output.exists():
+        save(manifest, {"protocol": protocol})
+    if options["skip_index"]:
+        config.backend.read_only = True
+    embeddings, ranking, answer = _clients(dimensions)
     if options["retrieval_only"]:
         answer = None
     graph = KnowledgeGraph(embeddings=embeddings, llm=ranking, config=config)
@@ -345,39 +334,9 @@ def run_hotpotqa_benchmark(options) -> None:
                 flush=True,
             )
             save(Path(options["output"]).with_suffix(".usage.json"), {"indexing": indexing_usage})
-        retriever = Retriever(
-            graph.backend,
-            embeddings,
-            None if options["mode"] != "full" else ranking,
-            retrieval,
-            title_by_source=title_map,
-            triple_filter_prompt=(PROMPTS / "filter_hotpot_triples.txt").read_text(
-                encoding="utf-8"
-            ),
-            passage_rerank_prompt=(PROMPTS / "rerank_hotpot_passages.txt").read_text(
-                encoding="utf-8"
-            ),
-        )
-        system = (PROMPTS / "answer_hotpot_question.txt").read_text(encoding="utf-8")
-        output = Path(options["output"])
-        protocol = {
-            "backend": options["backend"],
-            "mode": options["mode"],
-            "questions": options["questions"],
-            "top_k": options["top_k"],
-            "qa_top_k": options["qa_top_k"],
-            "dimensions": dimensions,
-            "namespace": "hotpotqa",
-        }
-        manifest = output.with_suffix(".manifest.json")
-        if (
-            output.exists()
-            and manifest.exists()
-            and json.loads(manifest.read_text(encoding="utf-8")).get("protocol") != protocol
-        ):
-            raise ValueError("Existing output uses another protocol; select a new output path")
-        if not output.exists():
-            save(manifest, {"protocol": protocol})
+            if report.failed_files:
+                raise RuntimeError("Some passages failed to index; rerun before scoring")
+        retriever = Retriever(graph.backend, embeddings, config=retrieval, title_by_source=title_map)
         asyncio.run(
             evaluate_hotpotqa(
                 selected,
@@ -396,11 +355,3 @@ def run_hotpotqa_benchmark(options) -> None:
         if retriever is not None:
             retriever.close()
         graph.close()
-        for client in http_clients:
-            closer = getattr(client, "close", None)
-            if closer is None:
-                continue
-            try:
-                closer()
-            except RuntimeError:
-                pass

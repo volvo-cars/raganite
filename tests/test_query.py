@@ -1,7 +1,6 @@
 """Query retrieves passages and answers from those passages."""
 
 import asyncio
-import threading
 
 import pytest
 from langchain_core.embeddings import Embeddings
@@ -9,8 +8,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from raganite.backends.base import DocumentGraph, GraphBackend, GraphNode
-from raganite.backends.models import PassageHit
+from raganite.backends.base import DocumentGraph, GraphNode
 from raganite.backends.sqlite import SQLiteBackend
 from raganite.config import RaganiteConfig, RetrievalConfig, SQLiteConfig
 from raganite.graph import KnowledgeGraph
@@ -108,9 +106,7 @@ def test_chunks_of_one_file_stay_separate_passages():
     retriever = Retriever(
         backend,
         FixedEmbeddings(),
-        config=RetrievalConfig(
-            use_triples=False, filter_triples=False, rerank_passages=False, workers=1, top_k=5
-        ),
+        config=RetrievalConfig(use_triples=False, rerank_passages=False, workers=1, top_k=5),
     )
     try:
         passages = retriever.retrieve("What does the boy do?")
@@ -131,7 +127,7 @@ def test_query_answers_from_the_retrieved_passages():
         backend,
         FixedEmbeddings(),
         model,
-        RetrievalConfig(use_triples=False, filter_triples=False, rerank_passages=False, workers=1),
+        RetrievalConfig(use_triples=False, rerank_passages=False, workers=1),
     )
     try:
         result = retriever.query("What is the capital of France?")
@@ -151,9 +147,7 @@ def test_graph_query_uses_the_same_answer():
         backend=SQLiteConfig(path=":memory:"),
         namespace="demo",
         embedding_dimensions=2,
-        retrieval=RetrievalConfig(
-            use_triples=False, filter_triples=False, rerank_passages=False, workers=1
-        ),
+        retrieval=RetrievalConfig(use_triples=False, rerank_passages=False, workers=1),
     )
     graph = KnowledgeGraph(
         embeddings=FixedEmbeddings(), llm=AnsweringChat(), backend=backend, config=config
@@ -173,7 +167,7 @@ async def test_aquery_answers_from_the_retrieved_passages():
         backend,
         FixedEmbeddings(),
         AnsweringChat(),
-        RetrievalConfig(use_triples=False, filter_triples=False, rerank_passages=False, workers=1),
+        RetrievalConfig(use_triples=False, rerank_passages=False, workers=1),
     )
     try:
         result = await retriever.aquery("What is the capital of France?")
@@ -191,7 +185,7 @@ async def test_concurrent_aqueries_include_retrieval_usage():
         backend,
         FixedEmbeddings(),
         AnsweringChat(),
-        RetrievalConfig(use_triples=False, filter_triples=False, rerank_passages=True, workers=2),
+        RetrievalConfig(use_triples=False, rerank_passages=True, workers=2),
     )
     try:
         results = await asyncio.gather(
@@ -243,96 +237,10 @@ def test_query_help_describes_answering():
 
 def test_default_retrieval_skips_the_chat_ranking_steps():
     config = RetrievalConfig()
-    assert config.filter_triples is False
     assert config.rerank_passages is False
     assert config.use_triples is True
-    assert config.triple_top_k == 10
-
-
-class _ParallelSearches(GraphBackend):
-    """Block each search until the other two have started."""
-
-    def __init__(self):
-        super().__init__(namespace="demo", dimensions=2)
-        self._gate = threading.Barrier(3)
-        self.fact_top_k = None
-
-    def _arrive(self) -> None:
-        self._gate.wait(timeout=2)
-
-    def direct_passages(self, embedding, *, top_k):
-        self._arrive()
-        return [PassageHit("chunk", "notes.txt", "Paris is the capital.", 1.0)]
-
-    def lexical_passages(self, query, *, top_k):
-        self._arrive()
-        return []
-
-    def search_facts(self, embedding, *, top_k=10):
-        self.fact_top_k = top_k
-        self._arrive()
-        return []
-
-    def expand_facts(self, facts, *, depth=2, limit=5000, degree_penalty_weight=0.25):
-        return []
-
-    def ensure_indexes(self) -> None:
-        return None
-
-    def prepare(self) -> None:
-        return None
-
-    def replace_document(self, graph):
-        raise NotImplementedError
-
-    def store_shared_edges(self, *args, **kwargs):
-        raise NotImplementedError
-
-    def store_shared_nodes(self, *args, **kwargs):
-        raise NotImplementedError
-
-    def has_sequence(self, source: str) -> bool:
-        return False
-
-    def delete_sequence(self, source: str) -> None:
-        return None
-
-    def document_hash(self, source: str, path: str):
-        return None
-
-    def delete_documents(self, source=None, *, keep_paths=()):
-        return 0
-
-    def nodes(self, **kwargs):
-        return []
-
-    def edges(self, **kwargs):
-        return []
-
-    def vector_search(self, *args, **kwargs):
-        return []
-
-    def fulltext_search(self, *args, **kwargs):
-        return []
-
-    def close(self) -> None:
-        return None
-
-
-def test_the_three_searches_run_together_and_fewer_facts_start_the_walk():
-    backend = _ParallelSearches()
-    retriever = Retriever(
-        backend,
-        FixedEmbeddings(),
-        None,
-        RetrievalConfig(filter_triples=False, rerank_passages=False, workers=1),
-    )
-    try:
-        passages = retriever.retrieve("What is the capital of France?")
-    finally:
-        retriever.close()
-    assert passages[0].text == "Paris is the capital."
-    assert backend.fact_top_k == 10
+    assert config.fact_temperature == 0.1
+    assert config.fact_damping == 0.85
 
 
 def test_text_output_names_a_ranking_step_that_ran():
@@ -344,7 +252,6 @@ def test_text_output_names_a_ranking_step_that_ran():
             [
                 {
                     "metadata": {
-                        "triple_filter_status": "disabled",
                         "passage_rerank_status": "llm",
                     }
                 }
@@ -352,7 +259,7 @@ def test_text_output_names_a_ranking_step_that_ran():
         )
         == "passage rerank: llm"
     )
-    assert _ranking_note([{"metadata": {"triple_filter_status": "disabled"}}]) is None
+    assert _ranking_note([{"metadata": {"passage_rerank_status": "disabled"}}]) is None
 
 
 def test_query_requires_an_llm():
@@ -361,7 +268,7 @@ def test_query_requires_an_llm():
         backend,
         FixedEmbeddings(),
         None,
-        RetrievalConfig(use_triples=False, filter_triples=False, rerank_passages=False, workers=1),
+        RetrievalConfig(use_triples=False, rerank_passages=False, workers=1),
     )
     try:
         with pytest.raises(ValueError, match="LLM"):

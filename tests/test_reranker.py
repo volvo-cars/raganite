@@ -1,7 +1,9 @@
 """A caller can leave passages in fusion order, ask the chat model, or use a cross-encoder."""
 
 import logging
-from unittest.mock import patch
+import sys
+from types import ModuleType
+from unittest.mock import Mock
 
 import pytest
 from langchain_core.documents import Document
@@ -115,18 +117,23 @@ def test_a_cross_encoder_reorders_without_a_chat_model():
         backend.close()
 
 
-def test_loading_a_cross_encoder_is_logged_without_verbose_mode(caplog):
-    with (
-        caplog.at_level(logging.WARNING, logger="raganite.retrieval.rerank"),
-        patch(
-            "langchain_community.cross_encoders.HuggingFaceCrossEncoder",
-            return_value="model",
-        ) as model,
-        patch(
-            "langchain_classic.retrievers.document_compressors.CrossEncoderReranker",
-            return_value="reranker",
-        ) as built,
+@pytest.fixture
+def cross_encoder_imports(monkeypatch):
+    model = Mock(return_value="model")
+    built = Mock(return_value="reranker")
+    for name, attribute, value in (
+        ("langchain_community.cross_encoders", "HuggingFaceCrossEncoder", model),
+        ("langchain_classic.retrievers.document_compressors", "CrossEncoderReranker", built),
     ):
+        module = ModuleType(name)
+        setattr(module, attribute, value)
+        monkeypatch.setitem(sys.modules, name, module)
+    return model, built
+
+
+def test_loading_a_cross_encoder_is_logged_without_verbose_mode(caplog, cross_encoder_imports):
+    model, built = cross_encoder_imports
+    with caplog.at_level(logging.WARNING, logger="raganite.retrieval.rerank"):
         result = langchain_cross_encoder("cross-encoder/example", 4)
     assert result == "reranker"
     model.assert_called_once_with(model_name="cross-encoder/example")
@@ -135,15 +142,19 @@ def test_loading_a_cross_encoder_is_logged_without_verbose_mode(caplog):
     assert "Loaded cross-encoder cross-encoder/example" in caplog.text
 
 
-def test_a_failed_cross_encoder_download_is_logged(caplog):
+def test_a_failed_cross_encoder_download_is_logged(caplog, cross_encoder_imports):
+    model, _ = cross_encoder_imports
+    model.side_effect = OSError("certificate verify failed")
     with (
         caplog.at_level(logging.WARNING, logger="raganite.retrieval.rerank"),
-        patch(
-            "langchain_community.cross_encoders.HuggingFaceCrossEncoder",
-            side_effect=OSError("certificate verify failed"),
-        ),
         pytest.raises(OSError, match="certificate verify failed"),
     ):
         langchain_cross_encoder("cross-encoder/example", 4)
     assert "Loading cross-encoder cross-encoder/example failed" in caplog.text
     assert "certificate verify failed" in caplog.text
+
+
+def test_cross_encoder_missing_extra_is_reported_when_selected(monkeypatch):
+    monkeypatch.setitem(sys.modules, "langchain_classic.retrievers.document_compressors", None)
+    with pytest.raises(RuntimeError, match="needs the rerank extra"):
+        langchain_cross_encoder("cross-encoder/example", 4)

@@ -15,7 +15,9 @@
 
 """Fact-based graph retrieval with configurable LLM filtering and reranking."""
 
+from .beam import Retriever
 from .models import Answer, FactEvidence, Passage, RetrievalResult
-from .retriever import Retriever
 
-__all__ = ["Answer", "FactEvidence", "Passage", "RetrievalResult", "Retriever"]
+BeamRetriever = Retriever
+
+__all__ = ["Answer", "BeamRetriever", "FactEvidence", "Passage", "RetrievalResult", "Retriever"]

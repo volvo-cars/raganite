@@ -6,7 +6,7 @@ import pytest
 from langchain_core.embeddings import Embeddings
 
 from raganite.backends.base import DocumentGraph, GraphEdge, GraphNode
-from raganite.backends.models import FactHit
+from raganite.backends.models import FactEdge
 from raganite.backends.neo4j import Neo4jBackend
 from raganite.backends.sqlite import SQLiteBackend
 from raganite.config import Neo4jConfig, RaganiteConfig, RetrievalConfig, SQLiteConfig
@@ -56,7 +56,7 @@ def _replace(backend, nodes: list[GraphNode], edges: list[GraphEdge]) -> None:
     )
 
 
-def test_expand_follows_the_store_topology():
+def test_beam_fact_snapshot_follows_the_store_topology():
     topology = GraphTopology(chunk_entity="MENTIONS", fact_subject="SUBJ", fact_object="OBJ")
     backend = _store(topology)
     chunk = GraphNode(
@@ -84,23 +84,11 @@ def test_expand_follows_the_store_topology():
         GraphEdge(id="mention", source="paris", target="chunk", type="MENTIONS"),
     ]
     _replace(backend, [chunk, paris, france, fact], edges)
-    hit = FactHit(
-        "fact",
-        "rel",
-        "Paris | capital | France",
-        "CAPITAL",
-        1.0,
-        "paris",
-        "Paris",
-        1.0,
-        "france",
-        "France",
-        1.0,
-    )
     try:
-        expanded = backend.expand_facts([hit], depth=0, limit=10, degree_penalty_weight=0)
-        assert [row.chunk_id for row in expanded] == ["chunk"]
-        assert expanded[0].text == "Paris is the capital"
+        assert backend.fact_edges() == [
+            FactEdge("Paris", "France", "Paris | capital | France", "CAPITAL", "rel", (1.0, 0.0))
+        ]
+        assert backend.chunk_records()[0].entities == ("France", "Paris")
     finally:
         backend.close()
 
@@ -134,7 +122,6 @@ def test_retrieve_returns_passages_without_scanning_the_store():
         embedding_dimensions=2,
         retrieval=RetrievalConfig(
             use_triples=False,
-            filter_triples=False,
             rerank_passages=False,
             workers=1,
         ),
@@ -185,7 +172,6 @@ def test_a_rare_name_from_fulltext_joins_the_vector_list():
         embedding_dimensions=2,
         retrieval=RetrievalConfig(
             use_triples=False,
-            filter_triples=False,
             rerank_passages=False,
             workers=1,
             top_k=2,
@@ -204,72 +190,6 @@ def test_a_rare_name_from_fulltext_joins_the_vector_list():
         kg.close()
 
 
-def test_fulltext_fusion_keeps_the_facts_on_the_passage():
-    topology = GraphTopology(chunk_entity="MENTIONS", fact_subject="SUBJ", fact_object="OBJ")
-    backend = _store(topology)
-    chunk = GraphNode(
-        id="chunk",
-        label="Chunk",
-        kind="chunk",
-        properties={"text": "Zephyros signed the letter", "path": "rare.md"},
-        embedding=[0.0, 1.0],
-    )
-    paris = GraphNode(id="paris", label="City", kind="entity", properties={"name": "Zephyros"})
-    france = GraphNode(id="france", label="Country", kind="entity", properties={"name": "France"})
-    fact = GraphNode(
-        id="fact",
-        label="__Fact__",
-        kind="fact",
-        properties={
-            "text": "Zephyros | signed | the letter",
-            "relation_type": "SIGNED",
-            "relationship_id": "rel",
-        },
-        embedding=[1.0, 0.0],
-    )
-    _replace(
-        backend,
-        [
-            chunk,
-            paris,
-            france,
-            fact,
-            GraphNode(
-                id="near",
-                label="Chunk",
-                kind="chunk",
-                properties={"text": "general notes about the weather", "path": "near.md"},
-                embedding=[1.0, 0.0],
-            ),
-        ],
-        [
-            GraphEdge(id="subj", source="fact", target="paris", type="SUBJ"),
-            GraphEdge(id="obj", source="fact", target="france", type="OBJ"),
-            GraphEdge(id="mention", source="paris", target="chunk", type="MENTIONS"),
-        ],
-    )
-    config = RaganiteConfig(
-        backend=SQLiteConfig(path=":memory:"),
-        namespace="demo",
-        embedding_dimensions=2,
-        retrieval=RetrievalConfig(
-            use_triples=True,
-            filter_triples=False,
-            rerank_passages=False,
-            workers=1,
-            top_k=2,
-        ),
-    )
-    kg = KnowledgeGraph(embeddings=FixedEmbeddings(), backend=backend, config=config)
-    try:
-        passages = kg.retrieve("Zephyros")
-        rare = next(passage for passage in passages if "Zephyros" in passage.text)
-        assert rare.metadata["lexical_rank"] == 1
-        assert [item.fact for item in rare.evidence] == ["Zephyros | signed | the letter"]
-    finally:
-        kg.close()
-
-
 def test_retrieve_rejects_an_empty_question():
     backend = _store()
     config = RaganiteConfig(
@@ -278,7 +198,6 @@ def test_retrieve_rejects_an_empty_question():
         embedding_dimensions=2,
         retrieval=RetrievalConfig(
             use_triples=False,
-            filter_triples=False,
             rerank_passages=False,
             workers=1,
         ),
