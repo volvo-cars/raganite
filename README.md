@@ -1,39 +1,37 @@
 # Raganite
 
-Raganite indexes documents into a knowledge graph. `retrieve` returns the passages that help answer a question. `query` writes a short answer from those passages.
+**Find the passages that answer a question, even when they’re in different files.**
 
-A passage is a piece of an indexed document, ranked for that question. The facts that supported a rank are on `evidence`.
+Raganite is an open-source Python library and command-line tool for searching your documents. It indexes the original text alongside a graph of facts and relationships. A repair note might name a pump model, while a separate manual lists its replacement parts. The graph helps Raganite find both passages when you ask which part to order.
+
+Use **`retrieve`** to get the original text and see where it came from. Use **`query`** to get a written answer based on those passages. By default, search uses an embedding model but does not call a chat model or run a separate reranker.
 
 ## Quickstart
 
-You need Python 3.11, 3.12, or 3.13, and [uv](https://docs.astral.sh/uv/).
+You’ll need Python 3.11, 3.12, or 3.13, [uv](https://docs.astral.sh/uv/), and an OpenAI API key for this example. SQLite is the default, so you don’t need to start a database server.
 
 ```sh
-git clone git@github.com:volvo-cars/raganite.git
+git clone https://github.com/volvo-cars/raganite.git
 cd raganite
 uv sync
 cp .env.example .env
 ```
 
-Set `OPENAI_API_KEY` in `.env`. Do not commit `.env`. The CLI reads that file from the current working directory. The defaults use SQLite at `.raganite/graph.sqlite3`, the namespace `default`, and 1536-dimension embeddings.
+Set `OPENAI_API_KEY` in `.env` and keep the file out of Git. Then add a text file, index it, and ask a question:
 
 ```sh
 mkdir -p documents
-printf 'Paris is the capital of France.\n' > documents/paris.txt
+printf 'The PX-200 pump uses replacement seal S-42.\n' > documents/manual.txt
 uv run raganite index documents --source notes
-uv run raganite retrieve "What is the capital of France?" --top-k 5 --format text
-uv run raganite query "What is the capital of France?" --top-k 5 --format text
+uv run raganite retrieve "Which seal fits the PX-200 pump?" --top-k 5 --format text
+uv run raganite query "Which seal fits the PX-200 pump?" --top-k 5 --format text
 ```
 
-A directory index reads text files whose names match the include globs (`*.py`, `*.md`, `*.rst`, `*.txt`, and the other text patterns in [Indexing](docs/guides/indexing.md)). PDF, HTML, and Office files are left out. A default `query` embeds the question once, fuses chunk vectors with full-text hits and fact expansion, and calls the chat model once to write the answer. Fact filtering and passage reranking are off unless you turn them on. `--top-k` shortens the list after retrieval. SQLite scores every stored vector in the process.
+`retrieve` shows the passage and its source. `query` writes the answer; add `--format json` to include the retrieved passages and usage details. See [Your first index](docs/getting-started/quickstart.md) for the full walkthrough.
 
-`retrieve` prints each passage's rank, title, source, score, and text. `--format json` adds the supporting facts in `evidence`, plus metadata. `query` text output prints only the answer. `--format json` also includes the passages, their evidence, and token and timing usage.
+## Use it from Python
 
-The commands are `init`, `config`, `index`, `retrieve`, `query`, and `clear`. The longer walkthrough is [Your first index](docs/getting-started/quickstart.md). Flags are in the [command line reference](docs/reference/cli.md).
-
-## Python
-
-The CLI loads `.env`. These clients read `OPENAI_API_KEY` from the process environment, so export the key before running the snippet.
+After indexing the example, run this from the repository root to open the same SQLite index. Export `OPENAI_API_KEY` in your shell first; these Python clients read it from the environment.
 
 ```python
 from raganite.clients.llm import OpenAIEmbeddingClient, OpenAILLMClient
@@ -41,63 +39,24 @@ from raganite.graph import KnowledgeGraph
 
 embeddings = OpenAIEmbeddingClient(model="text-embedding-3-small")
 chat = OpenAILLMClient(model="gpt-4o", use_responses_api=False)
+question = "Which seal fits the PX-200 pump?"
 
 with KnowledgeGraph(embeddings=embeddings, llm=chat) as graph:
-    passages = graph.retrieve("What is the capital of France?", top_k=5)
-    answered = graph.query("What is the capital of France?", top_k=5)
-
-print(passages[0].title)
-print(passages[0].text)
-print(passages[0].evidence)
-print(answered.answer)
+    for passage in graph.retrieve(question, top_k=5):
+        print(passage.source, passage.text)
+    print(graph.query(question, top_k=5).answer)
 ```
 
-`KnowledgeGraph` opens the same default SQLite namespace when you run it from the repository root. `passages.usage` and `answered.usage` record token and timing totals. Classes are in the [Python API](docs/reference/python-api.md).
+## Explore Raganite
 
-## Stores
-
-| | SQLite | Neo4j |
-| --- | --- | --- |
-| Best for | A graph on your machine | A graph you already run in Neo4j |
-| Setup | Nothing extra after `uv sync` | A Bolt URI, user, and password |
-| Default | Yes. File `.raganite/graph.sqlite3` | No. Opt in with config |
-
-Start with SQLite. SQLite scores every stored vector in the process, so it fits a small corpus. Point the same `retrieve` and `query` calls at Neo4j when that scan is the wrong cost. There is no hosted Raganite service. Steps are in [Neo4j](docs/guides/neo4j.md).
-
-## Model providers
-
-OpenAI, Azure OpenAI, and Hugging Face can each supply the chat model and the embedding model. Ollama can supply the chat model. Install the optional extras with `uv sync --extra huggingface` or `uv sync --extra ollama`. Local cross-encoder reranking is `uv sync --extra rerank`. Indexing accepts LangChain `Document` objects. [Model providers](docs/guides/providers.md) shows the clients.
-
-## Documentation
-
-| If you want to… | Read |
+| I want to... | Read |
 | --- | --- |
-| Install | [Installation](docs/getting-started/installation.md) |
-| Index, then ask | [Your first index](docs/getting-started/quickstart.md) |
-| Index a folder from Python | [Indexing](docs/guides/indexing.md) |
-| Retrieve passages or write an answer | [Search and retrieval](docs/guides/retrieval.md) |
-| Change settings | [Configuration](docs/guides/configuration.md) |
-| Choose a model provider | [Model providers](docs/guides/providers.md) |
-| Separate graphs | [Namespaces](docs/guides/namespaces.md) |
-| Store the graph in Neo4j | [Neo4j](docs/guides/neo4j.md) |
-| Look up a class or a command | [Python API](docs/reference/python-api.md), [Command line](docs/reference/cli.md) |
-| Read the scores in full | [Benchmarks](docs/guides/benchmarking.md) |
-
-## Benchmarks
-
-These are the latest benchmark runs. Both used gpt-4o and `text-embedding-3-large`. The HotpotQA comparison on the benchmarks page uses other models, so those rows are not a same-stack result. The full tables are in [Benchmarks](docs/guides/benchmarking.md).
-
-| Benchmark | Score | What it counts |
-| --- | --- | --- |
-| HotpotQA exact match | 60.9% | 1,000 questions, short answer matches the gold text |
-| HotpotQA answer F1 | 76.2% | Same questions, token overlap with the gold answer |
-| HotpotQA recall at 5 | 95.7% | A supporting passage is in the top 5 |
-| LoCoMo judge | 66.6% | 1,540 questions, adversarial left out, one pass |
-| LoCoMo token F1 | 54.3% | Same 1,540 questions |
-| LoCoMo single-hop judge | 79.5% | 841 questions |
-
-To run the same checks, follow [Run the benchmarks](docs/guides/run-benchmarks.md).
+| Index my own files | [Indexing](docs/guides/indexing.md) |
+| Change the database or model provider | [Neo4j setup](docs/guides/neo4j.md), [Model providers](docs/guides/providers.md) |
+| Configure search and answer generation | [Search and retrieval](docs/guides/retrieval.md), [Configuration](docs/guides/configuration.md) |
+| See the results or run an evaluation | [Benchmark results](docs/guides/benchmarking.md), [Run the benchmarks](docs/guides/run-benchmarks.md) |
+| Look up a class or command | [Python API](docs/reference/python-api.md), [CLI reference](docs/reference/cli.md) |
 
 ## License
 
-Apache 2.0. See [LICENSE](LICENSE).
+[Apache 2.0](LICENSE)
