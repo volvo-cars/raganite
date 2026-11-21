@@ -44,7 +44,7 @@ Prepared for the initial **0.1.0** release.
 - An `.env.example` with defaults, allowed values, OpenAI and Azure credential
   placeholders, and backend settings.
 - Published HotpotQA and LoCoMo benchmark results with evaluation settings and
-  metric definitions.
+  metric definitions, plus runnable benchmark commands with pinned datasets.
 - Grounded queries through `KnowledgeGraph.query`, `Retriever.query`,
   `Retriever.aquery`, and the `raganite query` command. The answer is generated
   only from the retrieved passages and is returned with those passages.
@@ -87,4 +87,3 @@ Prepared for the initial **0.1.0** release.
   together, and owned documents carry `RaganiteNode` and `Document`. Two
   connector types, or two domain labels with the same count, still raise
   `ValueError`.
-

@@ -155,7 +155,8 @@ Reports/*
 
 # Local graph directories and generated benchmark files
 .raganite/
-/benchmark/
+/benchmark/data/
+/benchmark/results/
 /experiment/
 /experimenting/
 /datasets/city/

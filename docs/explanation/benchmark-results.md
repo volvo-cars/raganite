@@ -49,3 +49,40 @@ The judge score counts answers deemed correct against the reference; token-set F
 ![LoCoMo overall judge accuracy: Raganite, 75.26%; full conversation in context, 72.90%; Mem0 with graph memory, 68.44%; Mem0, 66.88%; Zep, 65.99%; best chunk-based RAG baseline in the paper, 60.97%.](../assets/benchmarks/locomo-overall-judge-accuracy.svg)
 
 External scores come from [Mem0, Table 2](https://arxiv.org/html/2504.19413v1#S4.T2). The paper reports means across 10 judge runs; Raganite reports a single pass. These figures are published reference points, not a same-stack comparison.
+
+## Run the benchmarks yourself
+
+From a checkout of the repository, run `uv sync --locked` and set `OPENAI_API_KEY` in your local `.env`. The harness downloads pinned datasets on first use. Both commands use Raganite's bundled retrieval weights with passage reranking off; no separate model checkpoint is needed.
+
+These commands reproduce the evaluation **setup**, not necessarily the exact scores. 
+
+### HotpotQA
+
+Start a dedicated Neo4j database with Docker Compose. This run indexes all 9,811 passages and grades the top five retrieved passages and the answers on 1,000 questions.
+
+```sh
+BENCHMARK_BOLT_PORT=7690 docker compose -p raganite-hotpotqa \
+  -f benchmark/neo4j/docker-compose.yml up -d
+# Configure your chat models in .env
+#RAGANITE_CHAT__MODEL:gpt-4o \
+#RAGANITE_EMBEDDINGS__MODELtext-embedding-3-large \
+uv run python -u -m benchmark hotpotqa \
+  --backend neo4j --neo4j-uri bolt://127.0.0.1:7690 --dimensions 3072 \
+  --questions 1000 --top-k 200 --qa-top-k 5 --concurrency 3 --index-workers 3 \
+  --output benchmark/results/hotpotqa.jsonl
+```
+
+
+### LoCoMo
+
+Use a separate Neo4j instance because this benchmark uses a different embedding dimension. The `--mem0` flag downloads the pinned answer and judge prompts and selects the 1,540 non-adversarial questions. To try one conversation first, use `--questions 152` and a different output filename.
+
+```sh
+BENCHMARK_BOLT_PORT=7691 docker compose -p raganite-locomo \
+  -f benchmark/neo4j/docker-compose.yml up -d
+# Configure chat models
+uv run python -u -m benchmark locomo run --mem0 \
+  --backend neo4j --neo4j-uri bolt://127.0.0.1:7691 --dimensions 1536 \
+  --questions 1540 --top-k 60 --qa-top-k 60 --concurrency 5 \
+  --output benchmark/results/locomo.jsonl
+```
