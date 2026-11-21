@@ -47,10 +47,17 @@ class Neo4jBackend(_Neo4jStorage):
 
     @cached_property
     def _native_chunk_index(self) -> tuple[str, str]:
+        return self._native_node_vector_schema(self.config.vector_index, "vector_index")
+
+    @cached_property
+    def _native_fact_index(self) -> tuple[str, str]:
+        return self._native_node_vector_schema(self.config.fact_vector_index, "fact_vector_index")
+
+    def _native_node_vector_schema(self, name: str, setting: str) -> tuple[str, str]:
         rows = self._read(
             "SHOW VECTOR INDEXES YIELD name, entityType, labelsOrTypes, properties "
             "WHERE name=$name AND entityType='NODE' RETURN labelsOrTypes, properties",
-            name=self._lookup_index(self.config.vector_index),
+            name=self._lookup_index(name),
         )
         if rows:
             labels = rows[0]["labelsOrTypes"] or []
@@ -58,7 +65,8 @@ class Neo4jBackend(_Neo4jStorage):
             if len(labels) == len(properties) == 1:
                 return labels[0], properties[0]
         raise ValueError(
-            "Native beam retrieval requires a single-label, single-property node vector index"
+            f"Native beam retrieval requires {setting}={name!r} to name "
+            "a single-label, single-property node vector index"
         )
 
     def _name(self, variable: str) -> str:
@@ -85,13 +93,15 @@ class Neo4jBackend(_Neo4jStorage):
                     "o.raganite_id AS object_id,o.label AS object_label,o.properties_json AS object_properties"
                 )
             )
+        label, vector_property = self._native_fact_index
         rows = self._read(
-            "MATCH (fact:__Fact__) WHERE fact.embedding IS NOT NULL "
+            f"MATCH (fact:{quote(label)}) WHERE fact[$vector_property] IS NOT NULL "
             f"MATCH (fact)-[:{subject}]->(subject) "
             f"MATCH (fact)-[:{obj}]->(object) "
             f"RETURN {self._name('subject')} AS source,{self._name('object')} AS target,"
             "fact.text AS text,fact.relation_type AS relation_type,"
-            "fact.relationship_id AS relationship_id,fact.embedding AS embedding"
+            "fact.relationship_id AS relationship_id,fact[$vector_property] AS embedding",
+            vector_property=vector_property,
         )
         edges = []
         for row in rows:

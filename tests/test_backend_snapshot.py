@@ -90,7 +90,9 @@ def _graph(path, nodes, edges=(), *, content_hash="v1", source="corpus"):
 
 
 def test_native_snapshot_uses_index_label_and_vector_property(disposable_neo4j):
-    config = disposable_neo4j.model_copy(update={"vector_index": "native_passages"})
+    config = disposable_neo4j.model_copy(
+        update={"vector_index": "native_passages", "fact_vector_index": "native_assertions"}
+    )
     with GraphDatabase.driver(
         config.uri, auth=(config.username, config.password.get_secret_value())
     ) as driver:
@@ -102,11 +104,28 @@ def test_native_snapshot_uses_index_label_and_vector_property(disposable_neo4j):
             vector=list(VECTOR),
         )
         driver.execute_query(
+            "CREATE (pump:Device {name:'Pump'}), (mira:Person {name:'Mira'}), "
+            "(fact:Assertion {text:'Pump was invented by Mira', relation_type:'INVENTED_BY', "
+            "relationship_id:'invented', statementVector:$vector}), "
+            "(other:__Fact__ {text:'Not in fact index', embedding:$vector}), "
+            "(fact)-[:FACT_SUBJECT]->(pump), (fact)-[:FACT_OBJECT]->(mira), "
+            "(other)-[:FACT_SUBJECT]->(pump), (other)-[:FACT_OBJECT]->(mira)",
+            vector=list(VECTOR),
+        )
+        driver.execute_query(
             "CREATE VECTOR INDEX native_passages FOR (n:Article) ON (n.semanticVector) "
             "OPTIONS {indexConfig:{`vector.dimensions`:2, `vector.similarity_function`:'cosine'}}"
         )
         driver.execute_query("CALL db.awaitIndex('native_passages')")
+        driver.execute_query(
+            "CREATE VECTOR INDEX native_assertions FOR (n:Assertion) ON (n.statementVector) "
+            "OPTIONS {indexConfig:{`vector.dimensions`:2, `vector.similarity_function`:'cosine'}}"
+        )
+        driver.execute_query("CALL db.awaitIndex('native_assertions')")
         with Neo4jBackend(config, driver=driver, dimensions=2, layout="native") as store:
+            assert store.fact_edges() == [
+                FactEdge("Pump", "Mira", "Pump was invented by Mira", "INVENTED_BY", "invented", VECTOR)
+            ]
             chunks = store.chunk_records()
             assert {chunk.path for chunk in chunks} == {"manual.txt", "bio.txt"}
             assert store.chunk_embeddings([*(chunk.chunk_id for chunk in chunks), "missing"]) == {
@@ -121,6 +140,10 @@ def test_native_snapshot_uses_index_label_and_vector_property(disposable_neo4j):
                 assert all(passage.metadata["beam_candidate_count"] == 2 for passage in result)
             finally:
                 retriever.close()
+        missing = config.model_copy(update={"fact_vector_index": "missing_fact_index"})
+        with Neo4jBackend(missing, driver=driver, dimensions=2, layout="native") as store:
+            with pytest.raises(ValueError, match="fact_vector_index.*missing_fact_index"):
+                store.fact_edges()
 
 
 def test_owned_snapshot_preserves_records_provenance_and_precision(backend):

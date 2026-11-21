@@ -62,7 +62,7 @@ backend = Neo4jBackend(
 
 `layout="native"` forces read-only, even if the config says otherwise. Writes raise `PermissionError`. Use a dedicated database.
 
-Default beam retrieval reads passages with stored vectors using the node label and vector property declared by `vector_index`. The index must cover one label and one property. Native snapshots do not use Raganite's owned-document provenance.
+Default beam retrieval discovers the node label and vector property from `vector_index` for passages and from `fact_vector_index` for facts. Each configured index must be a node vector index covering one label and one property; a missing or incompatible index raises a configuration error. For a graph without a fact index, set `retrieval.use_triples` to `false` to use direct search. Native snapshots do not use Raganite's owned-document provenance.
 
 For direct search, Raganite discovers the semantic and document connectors by how often each pair appears. The most frequent pair is kept. Labels that only repeat the same endpoints, such as `RaganiteNode` with `__Entity__` or `Document`, stay one connector. If two connector types share that count, or two domain labels do, discovery raises `ValueError` and names both.
 
