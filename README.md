@@ -6,6 +6,8 @@ Raganite is an open-source Python library and command-line tool for searching yo
 
 Use **`retrieve`** to get the original text and see where it came from. Use **`query`** to get a written answer based on those passages. By default, search uses an embedding model but does not call a chat model or run a separate reranker.
 
+[Documentation](docs/index.md) · [Benchmark results](docs/explanation/benchmark-results.md) · [Compare with other systems](docs/explanation/benchmark-results.md#comparison-with-other-systems)
+
 ## Quickstart
 
 You’ll need Python 3.11, 3.12, or 3.13, [uv](https://docs.astral.sh/uv/), and an OpenAI API key for this example. SQLite is the default, so you don’t need to start a database server.
