@@ -365,7 +365,7 @@ async def _run_locomo_conversations_async(options, chosen, dimensions) -> None:
             namespace=namespace,
             retrieval=retrieval,
         )
-        config.indexing.workers = options["concurrency"]
+        config.indexing.workers = options.get("index_workers", options["concurrency"])
         config.indexing.schema_mode = options.get("schema_mode", "free")
         if options["skip_index"]:
             config.backend.read_only = True

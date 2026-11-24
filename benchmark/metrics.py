@@ -38,10 +38,20 @@ def retrieval_metrics(
     gold_titles: list[str],
     cutoffs: tuple[int, ...] = (1, 2, 5, 10, 20, 50, 100, 200),
 ) -> dict[str, float]:
-    gold = {normalize(title) for title in gold_titles}
+    return passage_retrieval_metrics(
+        [normalize(title) for title in titles], [normalize(title) for title in gold_titles], cutoffs
+    )
+
+
+def passage_retrieval_metrics(
+    passages: list[str],
+    gold_passages: list[str],
+    cutoffs: tuple[int, ...] = (1, 2, 5, 10, 20, 50, 100, 200),
+) -> dict[str, float]:
+    gold = set(gold_passages)
     metrics = {}
     for cutoff in cutoffs:
-        found = {normalize(title) for title in titles[:cutoff]}
+        found = set(passages[:cutoff])
         metrics[f"recall@{cutoff}"] = len(gold & found) / len(gold) if gold else 0.0
         metrics[f"all_support@{cutoff}"] = float(bool(gold) and gold <= found)
     return metrics

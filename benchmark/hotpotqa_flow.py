@@ -10,8 +10,13 @@ from pathlib import Path
 from langchain_core.documents import Document
 from openai import BadRequestError
 
-from benchmark.fetch import HOTPOT_CORPUS_URL, HOTPOT_QUERIES_URL, ensure_download
-from benchmark.metrics import aggregate, answer_metrics, benchmark_usage_report, retrieval_metrics
+from benchmark.hipporag import load_dataset, passage_text
+from benchmark.metrics import (
+    aggregate,
+    answer_metrics,
+    benchmark_usage_report,
+    passage_retrieval_metrics,
+)
 from benchmark.results import passages_from_rows, read_rows, save
 from benchmark.store import maybe_index, store_config
 
@@ -22,26 +27,18 @@ PROMPTS = Path(__file__).resolve().parent / "prompts"
 
 def corpus_documents(corpus: list[dict]) -> tuple[list[Document], dict[str, str]]:
     documents, titles = [], {}
-    for passage in corpus:
-        name = f"doc_{int(passage['idx']):05d}.txt"
+    for index, passage in enumerate(corpus):
+        name = f"doc_{int(passage.get('idx', index)):05d}.txt"
+        if name in titles:
+            raise ValueError(f"Duplicate corpus ID: {name}")
         titles[name] = passage["title"]
         documents.append(
             Document(
-                page_content=passage["text"],
+                page_content=passage_text(passage["title"], passage["text"]),
                 metadata={"path": name, "title": passage["title"]},
             )
         )
     return documents, titles
-
-
-def load_hotpotqa(data_dir: Path) -> tuple[list[dict], list[dict]]:
-    queries_path = ensure_download(data_dir / "hotpotqa.json", HOTPOT_QUERIES_URL)
-    corpus_path = ensure_download(data_dir / "hotpotqa_corpus.json", HOTPOT_CORPUS_URL)
-    queries = json.loads(queries_path.read_text(encoding="utf-8"))
-    corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
-    if len(queries) != 1000 or len(corpus) != 9811:
-        raise ValueError("Expected 1,000 HotpotQA questions and 9,811 passages")
-    return queries, corpus
 
 
 def load_benchmark_env() -> None:
@@ -105,6 +102,7 @@ async def evaluate_hotpotqa(
     queries,
     retriever,
     title_map,
+    passage_map,
     *,
     answer_model,
     system: str,
@@ -137,6 +135,7 @@ async def evaluate_hotpotqa(
                         query,
                         retriever,
                         title_map,
+                        passage_map,
                         answer_model=answer_model,
                         system=system,
                         top_k=top_k,
@@ -174,6 +173,7 @@ async def _score_hotpot_question(
     query,
     retriever,
     title_map,
+    passage_map,
     *,
     answer_model,
     system,
@@ -199,20 +199,24 @@ async def _score_hotpot_question(
         ]
         passages = passages_from_rows(rows, title_map, top_k)
         logger.info("%s: retrieved %s passages", query["_id"], len(passages))
-        gold_titles = sorted({title for title, _ in query["supporting_facts"]})
-        answers = query["answer"] if isinstance(query["answer"], list) else [query["answer"]]
+        gold_titles = query["gold_titles"]
+        answers = query["answer"]
         item = {
             "id": query["_id"],
             "question": query["question"],
             "gold_answers": answers,
             "gold_titles": gold_titles,
+            "gold_passages": query["gold_passages"],
             "retrieved": passages,
-            "retrieval_metrics": retrieval_metrics([p["title"] for p in passages], gold_titles),
+            "retrieval_metrics": passage_retrieval_metrics(
+                [passage_map[Path(p["source"]).name] for p in passages],
+                query["gold_passages"],
+            ),
         }
         if answer_model is not None:
             logger.info("%s: answering from the top %s passages", query["_id"], qa_top_k)
             context = "\n\n".join(
-                f"[{i}] {p['title']}\n{p['text']}" for i, p in enumerate(passages[:qa_top_k], 1)
+                f"[{i}] {p['text']}" for i, p in enumerate(passages[:qa_top_k], 1)
             )
             try:
                 with usage_stage("benchmark.answer"):
@@ -248,20 +252,23 @@ def run_hotpotqa_benchmark(options) -> None:
     from raganite.retrieval import Retriever
 
     load_benchmark_env()
-    namespace = options.get("namespace", "hotpotqa")
+    dataset = options.get("dataset", "hotpotqa")
+    namespace = options.get("namespace") or f"{dataset}_title_text"
     if options["qa_top_k"] > options["top_k"]:
         raise ValueError("--qa-top-k must be no larger than --top-k")
     logger.info(
-        "HotpotQA: %s questions, backend %s, index workers %s, concurrency %s",
+        "%s: %s questions, backend %s, index workers %s, concurrency %s",
+        dataset,
         options["questions"],
         options["backend"],
         options["index_workers"],
         options["concurrency"],
     )
     data_dir = Path(options["data_dir"])
-    queries, corpus = load_hotpotqa(data_dir)
+    queries, corpus = load_dataset(dataset, data_dir)
     selected = queries[: options["questions"]]
     documents, title_map = corpus_documents(corpus)
+    passage_map = {doc.metadata["path"]: doc.page_content for doc in documents}
     dimensions = options["dimensions"]
     dimensions = dimensions or load_config().embedding_dimensions
     retrieval = RetrievalConfig(
@@ -291,6 +298,9 @@ def run_hotpotqa_benchmark(options) -> None:
     system = (PROMPTS / "answer_hotpot_question.txt").read_text(encoding="utf-8")
     settings = load_config()
     protocol = {
+        "dataset": dataset,
+        "passage_format": "title_newline_text",
+        "retrieval_scoring": "exact_passage",
         "backend": options["backend"],
         "questions": options["questions"],
         "top_k": options["top_k"],
@@ -321,8 +331,15 @@ def run_hotpotqa_benchmark(options) -> None:
     graph = KnowledgeGraph(embeddings=embeddings, llm=ranking, config=config)
     retriever = None
     try:
+        if options["skip_index"]:
+            cached = {
+                Path(record.path).name: record.text.strip()
+                for record in graph.backend.chunk_records()
+            }
+            if cached != {path: text.strip() for path, text in passage_map.items()}:
+                raise ValueError("Cached graph does not contain the expected title-plus-text corpus")
         report = maybe_index(
-            graph.indexer, documents, source="hotpotqa", skip_index=options["skip_index"]
+            graph.indexer, documents, source=dataset, skip_index=options["skip_index"]
         )
         indexing_usage = None
         if report is not None:
@@ -342,6 +359,7 @@ def run_hotpotqa_benchmark(options) -> None:
                 selected,
                 retriever,
                 title_map,
+                passage_map,
                 answer_model=answer,
                 system=system,
                 top_k=options["top_k"],

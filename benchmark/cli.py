@@ -6,6 +6,7 @@ from typing import Any
 
 import click
 
+from benchmark.hipporag import DATASETS, normalize_questions
 from benchmark.locomo import score_locomo
 from benchmark.store import prepare_connection
 from raganite.config import cpu_workers
@@ -26,6 +27,39 @@ def _use_verbosity(ctx: click.Context, verbose: int) -> None:
     configure_logging(max(parent.get("verbose") or 0, verbose))
 
 
+def _locomo_options(command):
+    for option in (
+        click.option(
+            "--mem0", is_flag=True, help="Use pinned Mem0 prompts and skip adversarial questions."
+        ),
+        click.option(
+            "--answer-template",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            help="Use a Mem0-format answer template instead of the original LoCoMo prompt.",
+        ),
+        click.option(
+            "--mem0-judge-template",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            help="Use a custom Mem0 judge; --questions counts non-adversarial questions.",
+        ),
+        click.option("--namespace-prefix", default="", help="Prefix LoCoMo conversation namespaces."),
+        click.option(
+            "--schema-mode",
+            type=click.Choice(["fixed", "free", "extracted"]),
+            default="free",
+            show_default=True,
+            help="LoCoMo extraction schema: built-in, free relations, or inferred from each session.",
+        ),
+        click.option(
+            "--llm-judge",
+            is_flag=True,
+            help="Also score each LoCoMo answer with the Mem0 judge. Token F1 is always recorded.",
+        ),
+    ):
+        command = option(command)
+    return command
+
+
 def run_hotpotqa(options: dict[str, Any]) -> None:
     """Compare saved results on matching questions."""
     from benchmark.metrics import compare
@@ -35,8 +69,11 @@ def run_hotpotqa(options: dict[str, Any]) -> None:
     if baseline_path is None:
         raise click.UsageError("--compare-only requires --baseline")
     completed = read_rows(Path(options["output"]))
-    queries_path = Path(options["data_dir"]) / "hotpotqa.json"
-    queries = json.loads(queries_path.read_text(encoding="utf-8"))[: options["questions"]]
+    dataset = options["dataset"]
+    stem, _ = DATASETS[dataset]
+    queries_path = options["data_dir"] / f"{stem}.json"
+    queries = normalize_questions(dataset, json.loads(queries_path.read_text(encoding="utf-8")))
+    queries = queries[: options["questions"]]
     candidate = [completed[query["_id"]] for query in queries if query["_id"] in completed]
     if not candidate:
         raise click.ClickException("No completed results to compare")
@@ -50,20 +87,22 @@ def run_hotpotqa(options: dict[str, Any]) -> None:
 @_verbose_option
 @click.pass_context
 def main(ctx: click.Context, verbose: int) -> None:
-    """Run HotpotQA and LoCoMo evaluations and print their scores."""
+    """Run document and conversation QA evaluations."""
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
     configure_logging(verbose)
 
 
-@main.command("hotpotqa")
+@main.command("qa")
 @_verbose_option
+@_locomo_options
+@click.option(
+    "--dataset", type=click.Choice([*DATASETS, "locomo"]), default="hotpotqa", show_default=True
+)
 @click.option(
     "--questions",
-    type=click.IntRange(1, 1000),
-    default=200,
-    show_default=True,
-    help="First N questions. The full corpus is indexed either way.",
+    type=click.IntRange(min=1),
+    help="First N questions. Defaults to 200 for document QA and 100 for LoCoMo.",
 )
 @click.option(
     "--concurrency",
@@ -85,7 +124,7 @@ def main(ctx: click.Context, verbose: int) -> None:
 @click.option(
     "--skip-index", is_flag=True, help="Reuse the selected graph instead of indexing the corpus."
 )
-@click.option("--namespace", default="hotpotqa", show_default=True, help="Owned graph namespace.")
+@click.option("--namespace", help="Owned graph namespace. Defaults to <dataset>_title_text.")
 @click.option(
     "--data-dir",
     type=click.Path(path_type=Path),
@@ -96,8 +135,7 @@ def main(ctx: click.Context, verbose: int) -> None:
 @click.option(
     "--sqlite-path",
     type=click.Path(path_type=Path),
-    default=Path("benchmark/data/hotpotqa.sqlite3"),
-    show_default=True,
+    help="SQLite path. Defaults to benchmark/data/<dataset>.sqlite3.",
 )
 @click.option("--neo4j-uri", envvar="NEO4J_URI", default="bolt://127.0.0.1:7690", show_default=True)
 @click.option("--neo4j-username", default="neo4j", show_default=True)
@@ -112,9 +150,7 @@ def main(ctx: click.Context, verbose: int) -> None:
 @click.option(
     "--top-k",
     type=click.IntRange(min=1),
-    default=200,
-    show_default=True,
-    help="Passages kept for recall.",
+    help="Passages retrieved. Defaults to 200 for document QA and 20 for LoCoMo.",
 )
 @click.option(
     "--qa-top-k",
@@ -126,8 +162,7 @@ def main(ctx: click.Context, verbose: int) -> None:
 @click.option(
     "--output",
     type=click.Path(path_type=Path),
-    default=Path("benchmark/results/hotpotqa.jsonl"),
-    show_default=True,
+    help="Result path. Defaults to benchmark/results/<dataset>.jsonl.",
 )
 @click.option("--retrieval-only", is_flag=True, help="Score passages and skip answer generation.")
 @click.option(
@@ -141,20 +176,52 @@ def main(ctx: click.Context, verbose: int) -> None:
     help="Rebuild the saved read-only comparison. Does not index or call a model.",
 )
 @click.pass_context
-def hotpotqa(ctx: click.Context, **options: Any) -> None:
-    """Download HotpotQA, index it, and answer the first questions.
+def qa(ctx: click.Context, **options: Any) -> None:
+    """Index and evaluate a document or conversation QA dataset.
 
-    SQLite is the default graph. Neo4j uses the local database from
-    ``benchmark/neo4j/docker-compose.yml``. ``--skip-index`` reuses that graph.
+    Document QA indexes the whole corpus. LoCoMo indexes each selected
+    conversation separately. SQLite is the default; --skip-index reuses a graph.
     Repeating a command resumes questions missing from --output.
     """
     _use_verbosity(ctx, options["verbose"])
+    dataset = options["dataset"]
+    options["sqlite_path"] = options["sqlite_path"] or options["data_dir"] / f"{dataset}.sqlite3"
+    options["output"] = options["output"] or Path(f"benchmark/results/{dataset}.jsonl")
+    if dataset == "locomo":
+        if any(options[name] for name in ("retrieval_only", "compare_only", "baseline", "namespace")):
+            raise click.UsageError(
+                "--retrieval-only, --compare-only, --baseline, and --namespace are not supported "
+                "for LoCoMo; use --namespace-prefix for conversation namespaces."
+            )
+        options["questions"] = options["questions"] or 100
+        options["top_k"] = options["top_k"] or 20
+        _run_locomo(options)
+        return
+
+    locomo_only = (
+        "mem0", "answer_template", "mem0_judge_template", "namespace_prefix", "schema_mode", "llm_judge"
+    )
+    if any(
+        ctx.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
+        for name in locomo_only
+    ):
+        raise click.UsageError("LoCoMo-specific options require --dataset locomo.")
+    options["questions"] = options["questions"] or 200
+    if options["questions"] > 1000:
+        raise click.BadParameter(
+            "document QA datasets have at most 1000 questions", param_hint="--questions"
+        )
+    options["top_k"] = options["top_k"] or 200
+    options["namespace"] = options["namespace"] or f"{dataset}_title_text"
     if options.get("compare_only"):
         run_hotpotqa(options)
         return
     from benchmark.hotpotqa_flow import run_hotpotqa_benchmark
 
     run_hotpotqa_benchmark(prepare_connection(options))
+
+
+main.add_command(qa, "hotpotqa")
 
 
 @main.group("locomo")
@@ -191,6 +258,7 @@ def locomo_score(data: Path, results_path: Path, questions: int, mem0: bool) -> 
 
 @locomo.command("run")
 @_verbose_option
+@_locomo_options
 @click.option(
     "--questions",
     type=click.IntRange(min=1),
@@ -210,25 +278,11 @@ def locomo_score(data: Path, results_path: Path, questions: int, mem0: bool) -> 
     help="Maximum number of retrieved chunks sent to the answer model.",
 )
 @click.option(
-    "--mem0", is_flag=True, help="Use the pinned Mem0 prompts and skip adversarial questions."
-)
-@click.option(
-    "--answer-template",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Use a Mem0-format answer template instead of the original LoCoMo prompt.",
-)
-@click.option(
-    "--mem0-judge-template",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Use the Mem0 evaluation protocol; --questions counts non-adversarial questions.",
-)
-@click.option(
     "--backend", type=click.Choice(["sqlite", "neo4j"]), default="sqlite", show_default=True
 )
 @click.option(
     "--skip-index", is_flag=True, help="Reuse each conversation graph instead of indexing it."
 )
-@click.option("--namespace-prefix", default="", help="Prefix the owned conversation namespaces.")
 @click.option(
     "--data-dir", type=click.Path(path_type=Path), default=Path("benchmark/data"), show_default=True
 )
@@ -244,18 +298,6 @@ def locomo_score(data: Path, results_path: Path, questions: int, mem0: bool) -> 
 @click.option("--neo4j-database", default="neo4j", show_default=True)
 @click.option("--dimensions", type=click.IntRange(min=1), default=None)
 @click.option(
-    "--schema-mode",
-    type=click.Choice(["fixed", "free", "extracted"]),
-    default="free",
-    show_default=True,
-    help="fixed uses the built-in schema. free lets the model name relations from the text. extracted builds a schema from the session.",
-)
-@click.option(
-    "--llm-judge",
-    is_flag=True,
-    help="Also score each answer with the Mem0 LoCoMo judge. Token F1 is always recorded.",
-)
-@click.option(
     "--output",
     type=click.Path(path_type=Path),
     default=Path("benchmark/results/locomo.jsonl"),
@@ -269,7 +311,11 @@ def locomo_run(ctx: click.Context, **options: Any) -> None:
     Extraction is free unless --schema-mode says otherwise.
     SQLite is the default. Neo4j uses ``benchmark/neo4j/docker-compose.yml``.
     """
+    _use_verbosity(ctx, options["verbose"])
+    _run_locomo(options)
+
+
+def _run_locomo(options: dict[str, Any]) -> None:
     from benchmark.locomo_flow import run_locomo_benchmark
 
-    _use_verbosity(ctx, options["verbose"])
     run_locomo_benchmark(prepare_connection(options))
